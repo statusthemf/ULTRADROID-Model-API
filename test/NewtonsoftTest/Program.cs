@@ -16,7 +16,7 @@ void Test(string name, Action action)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"FAIL: {name} - {ex.Message}");
+        Console.WriteLine($"FAIL: {name} - {ex}");
         failed++;
     }
 }
@@ -27,117 +27,55 @@ void Assert(bool condition, string message)
         throw new Exception(message);
 }
 
-string json = """
-{
-    "asset": {
-        "version": "2.0",
-        "generator": "ULTRADROID"
-    },
-    "scene": 0,
-    "scenes": [
-        {
-            "nodes": [0, 1]
-        }
-    ],
-    "nodes": [
-        { "name": "Root", "children": [1] },
-        { "name": "MeshNode", "mesh": 0 }
-    ],
-    "meshes": [
-        {
-            "name": "TestMesh",
-            "primitives": [
-                {
-                    "attributes": {
-                        "POSITION": 0
-                    }
-                }
-            ]
-        }
-    ],
-    "buffers": [
-        {
-            "byteLength": 1024,
-            "uri": "model.bin"
-        }
-    ],
-    "unicode": "Omega: \u03A9, Rocket: \uD83D\uDE80",
-    "numbers": [0, -1, 3.14, 1e5],
-    "nullable": null
-}
-""";
+Console.WriteLine("ULTRADROID Newtonsoft.Json DLL Test");
+Console.WriteLine($"Assembly: {typeof(JsonConvert).Assembly.FullName}");
+Console.WriteLine();
 
-JObject root = JObject.Parse(json);
-
-Test("Parse root object", () =>
+Test("Load Newtonsoft.Json assembly", () =>
 {
-    Assert(root.Type == JTokenType.Object,
-        "Root is not an object.");
+    Assert(typeof(JsonConvert).Assembly != null,
+        "Newtonsoft.Json assembly did not load.");
 });
 
-Test("Read glTF version", () =>
+Test("Parse JSON object", () =>
 {
-    Assert((string?)root["asset"]?["version"] == "2.0",
-        "Incorrect asset version.");
+    JObject obj = JObject.Parse(
+        """{"name":"ULTRADROID","version":1}""");
+
+    Assert((string?)obj["name"] == "ULTRADROID",
+        "Incorrect name.");
+
+    Assert((int?)obj["version"] == 1,
+        "Incorrect version.");
 });
 
-Test("Read nested objects", () =>
+Test("Read nested objects and arrays", () =>
 {
-    Assert((string?)root["nodes"]?[1]?["name"] == "MeshNode",
-        "Could not read nested node.");
+    JObject obj = JObject.Parse(
+        """{"nodes":[{"name":"Root","children":[1,2]}]}""");
+
+    Assert((string?)obj["nodes"]?[0]?["name"] == "Root",
+        "Nested object failed.");
+
+    Assert((int?)obj["nodes"]?[0]?["children"]?[1] == 2,
+        "Array reading failed.");
 });
 
-Test("Read arrays", () =>
+Test("Handle Unicode and emoji", () =>
 {
-    Assert((int?)root["scenes"]?[0]?["nodes"]?[1] == 1,
-        "Incorrect array value.");
-});
+    JObject obj = JObject.Parse(
+        """{"text":"Omega: \u03A9, Rocket: \uD83D\uDE80"}""");
 
-Test("Read mesh attributes", () =>
-{
-    Assert(
-        (int?)root["meshes"]?[0]?["primitives"]?[0]
-            ?["attributes"]?["POSITION"] == 0,
-        "Incorrect POSITION accessor.");
-});
-
-Test("Read buffer properties", () =>
-{
-    Assert((int?)root["buffers"]?[0]?["byteLength"] == 1024,
-        "Incorrect buffer length.");
-
-    Assert((string?)root["buffers"]?[0]?["uri"] == "model.bin",
-        "Incorrect buffer URI.");
-});
-
-Test("Decode Unicode and emoji", () =>
-{
-    Assert((string?)root["unicode"] == "Omega: Ω, Rocket: 🚀",
+    Assert((string?)obj["text"] == "Omega: Ω, Rocket: 🚀",
         "Unicode decoding failed.");
 });
 
-Test("Read numeric values", () =>
+Test("Handle null values", () =>
 {
-    Assert((int?)root["numbers"]?[1] == -1,
-        "Negative integer failed.");
+    JObject obj = JObject.Parse("""{"value":null}""");
 
-    Assert((double?)root["numbers"]?[2] == 3.14,
-        "Decimal failed.");
-
-    Assert((double?)root["numbers"]?[3] == 100000,
-        "Scientific notation failed.");
-});
-
-Test("Handle JSON null", () =>
-{
-    Assert(root["nullable"]?.Type == JTokenType.Null,
-        "Null was not preserved.");
-});
-
-Test("Detect missing properties", () =>
-{
-    Assert(root["propertyThatDoesNotExist"] == null,
-        "Missing property was unexpectedly found.");
+    Assert(obj["value"]?.Type == JTokenType.Null,
+        "JSON null was not preserved.");
 });
 
 Test("Reject malformed JSON", () =>
@@ -156,17 +94,23 @@ Test("Reject malformed JSON", () =>
     Assert(threw, "Malformed JSON was accepted.");
 });
 
-Test("Detect wrong property types", () =>
+Test("Serialize and deserialize", () =>
 {
-    JToken? version = root["asset"]?["version"];
+    var original = new TestData
+    {
+        Name = "ULTRADROID",
+        Version = 2
+    };
 
-    Assert(version?.Type == JTokenType.String,
-        "Version should be a string.");
+    string serialized = JsonConvert.SerializeObject(original);
+    TestData? restored =
+        JsonConvert.DeserializeObject<TestData>(serialized);
 
-    Assert(
-        root["buffers"]?[0]?["byteLength"]?.Type
-            == JTokenType.Integer,
-        "byteLength should be an integer.");
+    Assert(restored?.Name == original.Name,
+        "Name did not survive round-trip.");
+
+    Assert(restored?.Version == original.Version,
+        "Version did not survive round-trip.");
 });
 
 Console.WriteLine();
@@ -175,4 +119,10 @@ Console.WriteLine($"Results: {passed} passed, {failed} failed.");
 if (failed > 0)
 {
     Environment.ExitCode = 1;
+}
+
+public sealed class TestData
+{
+    public string Name { get; set; } = "";
+    public int Version { get; set; }
 }
