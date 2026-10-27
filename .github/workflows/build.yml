@@ -55,5 +55,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ULTRADROID.Models
-          path: source/bin/Release/net10.0/ULTRADROID.Models.dll
+          path: src/bin/Release/net10.0/ULTRADROID.Models.dll
           if-no-files-found: error
