@@ -43,11 +43,7 @@ namespace ULTRADROID.Models.Test
             {
                 ClassInjector.RegisterTypeInIl2Cpp<ModelTestLoader>();
 
-                GameObject host = new GameObject(
-                    "ULTRADROID_Models_Test_Runtime");
-
-                UnityEngine.Object.DontDestroyOnLoad(host);
-                host.AddComponent<ModelTestLoader>();
+                AddComponent<ModelTestLoader>();
 
                 Log.LogInfo("Diagnostic runtime component registered.");
                 Log.LogInfo("Waiting for scene diagnostics...");
@@ -115,49 +111,72 @@ namespace ULTRADROID.Models.Test
         {
             try
             {
-                string sceneName = SceneManager.GetActiveScene().name;
+                Scene active = SceneManager.GetActiveScene();
+                string activeName = active.IsValid() ? active.name : "";
 
                 if (!string.Equals(
-                    sceneName,
-                    lastSceneName,
-                    StringComparison.Ordinal))
+                    activeName, lastSceneName, StringComparison.Ordinal))
                 {
                     ModelsTestPlugin.Log.LogInfo(
-                        "[Scene] Active scene changed: '" +
-                        lastSceneName + "' -> '" +
-                        sceneName + "'");
+                        $"[ScenePoll] Active scene changed: " +
+                        $"'{lastSceneName}' -> '{activeName}'");
 
-                    lastSceneName = sceneName;
-
-                    gameplayDetected = false;
-                    modelLoadAttempted = false;
-                    nextModelAttemptTime = 0f;
-
-                    DestroyCurrentModel();
-                    currentCamera = null;
+                    lastSceneName = activeName;
                 }
 
-                if (IsNonGameplayScene(sceneName))
+                string candidate = null;
+
+                // Check the active scene first.
+                if (active.IsValid() && active.isLoaded &&
+                    IsPlayableSceneName(activeName))
+                {
+                    candidate = activeName;
+                }
+                else
+                {
+                    // Gameplay may be loaded additively.
+                    for (int i = 0; i < SceneManager.sceneCount; i++)
+                    {
+                        Scene scene = SceneManager.GetSceneAt(i);
+
+                        if (scene.IsValid() && scene.isLoaded &&
+                            IsPlayableSceneName(scene.name))
+                        {
+                            candidate = scene.name;
+                            break;
+                        }
+                    }
+                }
+
+                if (candidate == null)
+                {
+                    if (Time.unscaledTime >= nextDiagnosticTime)
+                    {
+                        nextDiagnosticTime = Time.unscaledTime + 3f;
+                        LogCurrentScenes("Polling");
+                    }
+
                     return;
+                }
 
-                gameplayDetected = true;
-                detectedGameplayScene = sceneName;
+                if (!gameplayDetected ||
+                    !string.Equals(
+                        detectedGameplayScene,
+                        candidate,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    OnGameplaySceneDetected(candidate);
+                }
 
-                // This heartbeat must appear every three seconds if Update runs.
                 if (Time.unscaledTime >= nextDiagnosticTime)
                 {
                     nextDiagnosticTime = Time.unscaledTime + 3f;
-
                     ModelsTestPlugin.Log.LogInfo(
                         "[Heartbeat] ModelTestLoader.Update IS RUNNING.");
-
-                    LogCurrentScenes("Heartbeat");
                 }
 
-                if (!gameplayDetected || modelLoadAttempted)
-                    return;
-
-                if (Time.unscaledTime < nextModelAttemptTime)
+                if (modelLoadAttempted ||
+                    Time.unscaledTime < nextModelAttemptTime)
                     return;
 
                 TryLoadModel();
