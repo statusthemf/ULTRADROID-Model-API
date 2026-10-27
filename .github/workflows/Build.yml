@@ -4,21 +4,19 @@ name: Build ULTRADROID Models API
 on:
   push:
     paths:
-      - "APIs/Models/**"
+      - "source/**"
+      - "lib/**"
       - ".github/workflows/build.yml"
   pull_request:
     paths:
-      - "APIs/Models/**"
+      - "source/**"
+      - "lib/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: APIs/Models
 
     steps:
       - name: Checkout repository
@@ -30,7 +28,10 @@ jobs:
           dotnet-version: "6.0.x"
 
       - name: Check required game references
+        shell: bash
         run: |
+          set -e
+
           for file in \
             lib/BepInEx.Core.dll \
             lib/BepInEx.Unity.IL2CPP.dll \
@@ -45,13 +46,14 @@ jobs:
           done
 
       - name: Restore
-        run: dotnet restore ULTRADROID.Models.csproj
+        run: dotnet restore source/ULTRADROID.Models.csproj
 
       - name: Build
-        run: dotnet build ULTRADROID.Models.csproj --configuration Release --no-restore
+        run: dotnet build source/ULTRADROID.Models.csproj --configuration Release --no-restore
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
           name: ULTRADROID.Models
-          path: APIs/Models/bin/Release/net6.0/ULTRADROID.Models.dll
+          path: source/bin/Release/net6.0/ULTRADROID.Models.dll
+          if-no-files-found: error
