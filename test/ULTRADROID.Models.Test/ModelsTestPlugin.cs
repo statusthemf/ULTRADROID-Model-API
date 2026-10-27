@@ -66,13 +66,13 @@ namespace ULTRADROID.Models.Test
         private float nextDiagnosticTime;
         private float nextModelAttemptTime;
 
-        private string lastActiveSceneName = "";
+        private string lastSceneName = string.Empty;
         private string detectedGameplayScene = "";
 
         private bool gameplayDetected;
         private bool modelLoadAttempted;
 
-        private Camera selectedCamera;
+        private Camera currentCamera;
         private ModelInstance instance;
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
@@ -115,6 +115,34 @@ namespace ULTRADROID.Models.Test
         {
             try
             {
+                string sceneName = SceneManager.GetActiveScene().name;
+
+                if (!string.Equals(
+                    sceneName,
+                    lastSceneName,
+                    StringComparison.Ordinal))
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Scene] Active scene changed: '" +
+                        lastSceneName + "' -> '" +
+                        sceneName + "'");
+
+                    lastSceneName = sceneName;
+
+                    gameplayDetected = false;
+                    modelLoadAttempted = false;
+                    nextModelAttemptTime = 0f;
+
+                    DestroyCurrentModel();
+                    currentCamera = null;
+                }
+
+                if (IsNonGameplayScene(sceneName))
+                    return;
+
+                gameplayDetected = true;
+                detectedGameplayScene = sceneName;
+
                 // This heartbeat must appear every three seconds if Update runs.
                 if (Time.unscaledTime >= nextDiagnosticTime)
                 {
@@ -125,8 +153,6 @@ namespace ULTRADROID.Models.Test
 
                     LogCurrentScenes("Heartbeat");
                 }
-
-                DiagnoseActiveScene();
 
                 if (!gameplayDetected || modelLoadAttempted)
                     return;
@@ -178,9 +204,9 @@ namespace ULTRADROID.Models.Test
                 ? active.name
                 : "<invalid>";
 
-            if (activeName != lastActiveSceneName)
+            if (activeName != lastSceneName)
             {
-                lastActiveSceneName = activeName;
+                lastSceneName = activeName;
 
                 ModelsTestPlugin.Log.LogInfo(
                     $"[ScenePoll] Active scene changed: '{activeName}'");
@@ -256,11 +282,29 @@ namespace ULTRADROID.Models.Test
             // Allow the game a little time to initialize its camera.
             nextModelAttemptTime = Time.unscaledTime + 2f;
 
-            selectedCamera = null;
+            currentCamera = null;
             DestroyCurrentModel();
 
             ModelsTestPlugin.Log.LogInfo(
                 "[Gameplay] Model load scheduled in two seconds.");
+        }
+
+        private static bool IsNonGameplayScene(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName))
+                return true;
+
+            string scene = sceneName.ToLowerInvariant();
+
+            return scene.Contains("bootstrap") ||
+                   scene == "intro" ||
+                   scene.Contains("mainmenu") ||
+                   scene.Contains("main_menu") ||
+                   scene.Contains("main menu") ||
+                   scene.Contains("title") ||
+                   scene.Contains("loading") ||
+                   scene.Contains("credits") ||
+                   scene.Contains("ending");
         }
 
         private Camera FindUsableCamera()
@@ -318,9 +362,9 @@ namespace ULTRADROID.Models.Test
                 return;
             }
 
-            selectedCamera = FindUsableCamera();
+            currentCamera = FindUsableCamera();
 
-            if (selectedCamera == null)
+            if (currentCamera == null)
             {
                 ModelsTestPlugin.Log.LogWarning(
                     "[Camera] No usable camera yet. Retrying in three seconds.");
@@ -339,7 +383,7 @@ namespace ULTRADROID.Models.Test
                 ModelLoadOptions options = new ModelLoadOptions
                 {
                     Name = "BladesOfChaosTest",
-                    Parent = selectedCamera.transform,
+                    Parent = currentCamera.transform,
                     Position = new Vector3(0f, 0f, 2f),
                     RotationEuler = Vector3.zero,
                     Scale = new Vector3(0.1f, 0.1f, 0.1f)
@@ -361,8 +405,8 @@ namespace ULTRADROID.Models.Test
                     $"[Model] LOAD SUCCESS: '{instance.Root.name}'");
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Camera='{selectedCamera.name}', " +
-                    $"position={selectedCamera.transform.position}");
+                    $"[Model] Camera='{currentCamera.name}', " +
+                    $"position={currentCamera.transform.position}");
 
                 ModelsTestPlugin.Log.LogInfo(
                     $"[Model] Root local position=" +
