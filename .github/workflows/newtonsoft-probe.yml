@@ -1,0 +1,32 @@
+
+name: Build Newtonsoft Runtime Probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'NewtonsoftProbe.cs'
+      - 'NewtonsoftProbe.csproj'
+      - '.github/workflows/newtonsoft-probe.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Build plugin
+        run: dotnet build NewtonsoftProbe.csproj --configuration Release
+
+      - name: Upload plugin DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewtonsoftProbe
+          path: bin/Release/net6.0/NewtonsoftProbe.dll
