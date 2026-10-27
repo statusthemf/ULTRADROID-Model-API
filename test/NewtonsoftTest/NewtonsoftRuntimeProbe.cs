@@ -67,17 +67,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             Run("21 - Deserialize primitive Boolean", TestDeserializeBoolean);
             Run("22 - Deserialize to JObject", TestDeserializeObject);
             Run("23 - Token conversion API inspection", InspectConversions);
-            Run("24 - Deserialize custom model", () =>
-                Skip("Generic model deserialization crashes Il2CppInterop."));
-
-            Run("25 - Deserialize nested model and list", () =>
-                Skip("Blocked until safe model mapping is implemented."));
-
-            Run("26 - Missing model properties", () =>
-                Skip("Blocked until safe model mapping is implemented."));
-
-            Run("27 - Explicit null model properties", () =>
-                Skip("Blocked until safe model mapping is implemented."));
+            Run("24 - Manual custom model mapping", TestManualCustomModel);
+            Run("25 - Manual nested model mapping", TestManualNestedModel);
+            Run("26 - Missing model properties", TestManualMissingProperties);
+            Run("27 - Explicit null model properties", TestManualNullProperties);
 
             Log.LogInfo("========================================");
             Log.LogInfo(
@@ -964,6 +957,122 @@ public class NewtonsoftRuntimeProbe : BasePlugin
     {
         public string? Id { get; set; }
         public int Value { get; set; }
+    }
+
+    private object? ReadSimpleValue(
+        object jsonObject,
+        string propertyName,
+        Type targetType)
+    {
+        var token = GetProperty(jsonObject, propertyName);
+
+        if (token == null)
+            return targetType.IsValueType
+                ? Activator.CreateInstance(targetType)
+                : null;
+
+        var tokenTypeProperty = jTokenType.GetProperty("Type");
+        var tokenType = tokenTypeProperty?
+            .GetValue(token)?
+            .ToString();
+
+        if (tokenType == "Null" || tokenType == "Undefined")
+            return null;
+
+        if (targetType == typeof(string))
+            return ConvertToken(token, typeof(string));
+
+        if (targetType == typeof(int))
+            return checked((int)(long)ConvertToken(token, typeof(long)));
+
+        if (targetType == typeof(long))
+            return ConvertToken(token, typeof(long));
+
+        if (targetType == typeof(bool))
+            return ConvertToken(token, typeof(bool));
+
+        throw new NotSupportedException(
+            "Unsupported property type: " + targetType.FullName);
+    }
+
+    private ProbeModel MapProbeModel(object jsonObject)
+    {
+        return new ProbeModel
+        {
+            Name = (string?)ReadSimpleValue(
+                jsonObject, "Name", typeof(string)),
+            Version = (int)ReadSimpleValue(
+                jsonObject, "Version", typeof(int))!,
+            Enabled = (bool)ReadSimpleValue(
+                jsonObject, "Enabled", typeof(bool))!
+        };
+    }
+
+    private void TestManualCustomModel()
+    {
+        var jsonObject = ParseObject(
+            "{\"Name\":\"ULTRADROID\",\"Version\":10,\"Enabled\":true}");
+
+        var model = MapProbeModel(jsonObject);
+
+        Check(model.Name == "ULTRADROID", "Name incorrect.");
+        Check(model.Version == 10, "Version incorrect.");
+        Check(model.Enabled, "Enabled incorrect.");
+
+        Log.LogInfo("Manual model mapping passed.");
+    }
+
+    private void TestManualNestedModel()
+    {
+        var root = ParseObject(
+            "{\"Name\":\"Root\",\"Details\":{\"Name\":\"Child\"," +
+            "\"Version\":2,\"Enabled\":true}}");
+
+        var details = GetProperty(root, "Details");
+
+        Check(details != null, "Details token missing.");
+
+        var rootName = ReadSimpleValue(root, "Name", typeof(string));
+        var child = MapProbeModel(details!);
+
+        Check((string?)rootName == "Root", "Root name incorrect.");
+        Check(child.Name == "Child", "Child name incorrect.");
+        Check(child.Version == 2, "Child version incorrect.");
+        Check(child.Enabled, "Child enabled incorrect.");
+
+        Log.LogInfo("Manual nested model mapping passed.");
+    }
+
+    private void TestManualMissingProperties()
+    {
+        var jsonObject = ParseObject("{\"Name\":\"Partial\"}");
+        var model = MapProbeModel(jsonObject);
+
+        Check(model.Name == "Partial", "Name incorrect.");
+        Check(model.Version == 0, "Missing Version should default to 0.");
+        Check(!model.Enabled, "Missing Enabled should default to false.");
+
+        Log.LogInfo("Missing property defaults passed.");
+    }
+
+    private void TestManualNullProperties()
+    {
+        var jsonObject = ParseObject(
+            "{\"Name\":null,\"Version\":null,\"Enabled\":null}");
+
+        Check(
+            ReadSimpleValue(jsonObject, "Name", typeof(string)) == null,
+            "Name should be null.");
+
+        Check(
+            ReadSimpleValue(jsonObject, "Version", typeof(int)) == null,
+            "Explicit null Version should remain null.");
+
+        Check(
+            ReadSimpleValue(jsonObject, "Enabled", typeof(bool)) == null,
+            "Explicit null Enabled should remain null.");
+
+        Log.LogInfo("Explicit null token handling passed.");
     }
 
     private object? GetModelValue(
