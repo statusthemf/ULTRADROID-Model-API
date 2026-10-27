@@ -60,39 +60,18 @@ jobs:
       - name: Build test plugin
         run: dotnet build test/ULTRADROID.Models.Test/ULTRADROID.Models.Test.csproj --configuration Release
 
-      - name: Package API and test separately
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p dist/api dist/test
-
-          cp src/bin/Release/net10.0/ULTRADROID.Models.dll \
-            dist/api/ULTRADROID.Models.dll
-
-          cp test/ULTRADROID.Models.Test/bin/Release/net10.0/ULTRADROID.Models.Test.dll \
-            dist/test/ULTRADROID.Models.Test.dll
-
-          (
-            cd dist/api
-            zip -j ../ULTRADROID.Models.zip ULTRADROID.Models.dll
-          )
-
-          (
-            cd dist/test
-            zip -j ../ULTRADROID.Models.Test.zip ULTRADROID.Models.Test.dll
-          )
-
-      - name: Upload Models API ZIP
+      - name: Upload Models API DLL
         uses: actions/upload-artifact@v4
         with:
-          name: ULTRADROID.Models
-          path: dist/ULTRADROID.Models.zip
+          name: ULTRADROID.Models.dll
+          path: src/bin/Release/net10.0/ULTRADROID.Models.dll
           if-no-files-found: error
+          compression-level: 0
 
-      - name: Upload test plugin ZIP
+      - name: Upload test plugin DLL
         uses: actions/upload-artifact@v4
         with:
-          name: ULTRADROID.Models.Test
-          path: dist/ULTRADROID.Models.Test.zip
+          name: ULTRADROID.Models.Test.dll
+          path: test/ULTRADROID.Models.Test/bin/Release/net10.0/ULTRADROID.Models.Test.dll
           if-no-files-found: error
+          compression-level: 0
