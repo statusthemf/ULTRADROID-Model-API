@@ -405,7 +405,8 @@ namespace ULTRADROID.Models.Test
                     Parent = currentCamera.transform,
                     Position = new Vector3(0f, 2f, 2f),
                     RotationEuler = Vector3.zero,
-                    Scale = new Vector3(0.05f, 0.05f, 0.05f)
+                    Scale = new Vector3(0.05f, 0.05f, 0.05f).
+                    FlipUvV = true
                 };
 
                 instance = ModelAPI.LoadGLB(
