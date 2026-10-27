@@ -105,6 +105,21 @@ namespace ULTRADROID.Models
             public bool Normalized;
         }
 
+        private sealed class GltfImage
+        {
+            public Texture2D Texture;
+        }
+
+        private sealed class GltfTexture
+        {
+            public int Source = -1;
+        }
+
+        private sealed class GltfMaterial
+        {
+            public Material Material;
+        }
+
         internal static ModelInstance Load(string path, ModelLoadOptions options)
         {
             GameObject rootObject = null;
@@ -127,6 +142,11 @@ namespace ULTRADROID.Models
 
                     List<BufferView> views = ReadBufferViews(gltf);
                     List<Accessor> accessors = ReadAccessors(gltf);
+                    List<GltfImage> images = ReadImages(
+                        gltf, path, binary, views, options.LoadTextures);
+                    List<GltfTexture> textures = ReadTextures(gltf);
+                    List<GltfMaterial> materials = ReadMaterials(
+                        gltf, images, textures, options.LoadTextures);
                     JsonElement meshes = RequiredArray(gltf, "meshes");
                     JsonElement nodes = OptionalArray(gltf, "nodes");
 
@@ -215,6 +235,7 @@ namespace ULTRADROID.Models
                             binary,
                             views,
                             accessors,
+                            materials,
                             nodeObjects[i].transform,
                             options);
 
@@ -232,6 +253,7 @@ namespace ULTRADROID.Models
                                 binary,
                                 views,
                                 accessors,
+                                materials,
                                 rootObject.transform,
                                 options);
                             meshCount++;
@@ -347,6 +369,7 @@ namespace ULTRADROID.Models
             byte[] binary,
             List<BufferView> views,
             List<Accessor> accessors,
+            List<GltfMaterial> materials,
             Transform parent,
             ModelLoadOptions options)
         {
@@ -432,7 +455,12 @@ namespace ULTRADROID.Models
                 filter.sharedMesh = unityMesh;
 
                 MeshRenderer renderer = primitiveObject.AddComponent<MeshRenderer>();
-                renderer.sharedMaterial = CreateDefaultMaterial();
+                int materialIndex = GetInt(primitive, "material", -1);
+
+                renderer.sharedMaterial = materialIndex >= 0 &&
+                                          materialIndex < materials.Count
+                    ? materials[materialIndex].Material
+                    : CreateDefaultMaterial();
 
                 if (options.CreateColliders)
                 {
@@ -448,12 +476,434 @@ namespace ULTRADROID.Models
             if (shader == null)
                 shader = Shader.Find("Standard");
             if (shader == null)
+                shader = Shader.Find("Unlit/Texture");
+            if (shader == null)
                 shader = Shader.Find("Unlit/Color");
 
             if (shader == null)
-                throw new NotSupportedException("No compatible Unity shader was found.");
+                throw new NotSupportedException(
+                    "No compatible Unity shader was found.");
 
-            return new Material(shader);
+            Material material = new Material(shader);
+
+            if (material.HasProperty("_BaseColor"))
+                material.SetColor("_BaseColor", Color.white);
+            if (material.HasProperty("_Color"))
+                material.SetColor("_Color", Color.white);
+
+            return material;
+        }
+
+        private static List<GltfImage> ReadImages(
+            JsonElement gltf,
+            string glbPath,
+            byte[] binary,
+            List<BufferView> views,
+            bool loadTextures)
+        {
+            List<GltfImage> result = new List<GltfImage>();
+            JsonElement images = OptionalArray(gltf, "images");
+
+            if (images.ValueKind != JsonValueKind.Array)
+                return result;
+
+            string directory = Path.GetDirectoryName(Path.GetFullPath(glbPath));
+            string directoryPrefix = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+
+            foreach (JsonElement imageData in images.EnumerateArray())
+            {
+                GltfImage image = new GltfImage();
+
+                if (loadTextures)
+                {
+                    byte[] bytes;
+
+                    if (imageData.TryGetProperty(
+                            "bufferView", out JsonElement viewElement))
+                    {
+                        int viewIndex = viewElement.GetInt32();
+
+                        if (viewIndex < 0 || viewIndex >= views.Count)
+                            throw new InvalidDataException(
+                                "Image bufferView index is out of range.");
+
+                        BufferView view = views[viewIndex];
+                        long viewEnd = (long)view.Offset + view.Length;
+
+                        if (view.Offset < 0 || view.Length < 0 ||
+                            viewEnd > binary.Length)
+                        {
+                            throw new InvalidDataException(
+                                "Image bufferView exceeds the binary chunk.");
+                        }
+
+                        bytes = new byte[view.Length];
+                        Buffer.BlockCopy(
+                            binary, view.Offset, bytes, 0, view.Length);
+                    }
+                    else if (imageData.TryGetProperty(
+                                 "uri", out JsonElement uriElement))
+                    {
+                        string uri = uriElement.GetString();
+
+                        if (string.IsNullOrWhiteSpace(uri))
+                            throw new InvalidDataException("Image URI is empty.");
+
+                        if (uri.StartsWith(
+                                "data:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            int comma = uri.IndexOf(',');
+
+                            if (comma < 0 ||
+                                uri.IndexOf(
+                                    ";base64", StringComparison.OrdinalIgnoreCase) < 0)
+                            {
+                                throw new NotSupportedException(
+                                    "Only base64 data URIs are supported for images.");
+                            }
+
+                            bytes = Convert.FromBase64String(uri.Substring(comma + 1));
+                        }
+                        else
+                        {
+                            if (Uri.IsWellFormedUriString(uri, UriKind.Absolute))
+                            {
+                                Uri absoluteUri = new Uri(uri);
+                                if (!absoluteUri.IsFile)
+                                    throw new NotSupportedException(
+                                        "Remote image URLs are not supported.");
+
+                                uri = absoluteUri.LocalPath;
+                            }
+
+                            string decoded = Uri.UnescapeDataString(uri);
+                            string fullPath = Path.GetFullPath(
+                                Path.Combine(directory, decoded));
+
+                            StringComparison pathComparison =
+                                Path.DirectorySeparatorChar == '\\'
+                                    ? StringComparison.OrdinalIgnoreCase
+                                    : StringComparison.Ordinal;
+
+                            if (!fullPath.StartsWith(
+                                    directoryPrefix, pathComparison))
+                            {
+                                throw new InvalidDataException(
+                                    "Image URI points outside the model directory.");
+                            }
+
+                            bytes = File.ReadAllBytes(fullPath);
+                        }
+                    }
+                    else
+                    {
+                        throw new InvalidDataException(
+                            "Image has neither a URI nor a bufferView.");
+                    }
+
+                    if (bytes.Length == 0)
+                        throw new InvalidDataException("Image data is empty.");
+
+                    Texture2D texture = new Texture2D(
+                        2, 2, TextureFormat.RGBA32, true);
+                    texture.name = GetString(imageData, "name", "GLTF_Image");
+
+                    if (!ImageConversion.LoadImage(texture, bytes, false))
+                    {
+                        UnityEngine.Object.Destroy(texture);
+                        throw new InvalidDataException(
+                            "Unity could not decode a GLTF image.");
+                    }
+
+                    texture.wrapMode = TextureWrapMode.Repeat;
+                    texture.filterMode = FilterMode.Bilinear;
+                    texture.anisoLevel = 4;
+                    image.Texture = texture;
+                }
+
+                result.Add(image);
+            }
+
+            return result;
+        }
+
+        private static List<GltfTexture> ReadTextures(JsonElement gltf)
+        {
+            List<GltfTexture> result = new List<GltfTexture>();
+            JsonElement textures = OptionalArray(gltf, "textures");
+
+            if (textures.ValueKind != JsonValueKind.Array)
+                return result;
+
+            foreach (JsonElement textureData in textures.EnumerateArray())
+            {
+                result.Add(new GltfTexture
+                {
+                    Source = GetInt(textureData, "source", -1)
+                });
+            }
+
+            return result;
+        }
+
+        private static Texture2D ResolveTexture(
+            JsonElement textureInfo,
+            List<GltfImage> images,
+            List<GltfTexture> textures)
+        {
+            if (!textureInfo.TryGetProperty(
+                    "index", out JsonElement indexElement))
+                return null;
+
+            int textureIndex = indexElement.GetInt32();
+            if (textureIndex < 0 || textureIndex >= textures.Count)
+                throw new InvalidDataException(
+                    "Material texture index is out of range.");
+
+            int imageIndex = textures[textureIndex].Source;
+            if (imageIndex < 0 || imageIndex >= images.Count)
+                throw new InvalidDataException(
+                    "Texture source image index is out of range.");
+
+            return images[imageIndex].Texture;
+        }
+
+        private static List<GltfMaterial> ReadMaterials(
+            JsonElement gltf,
+            List<GltfImage> images,
+            List<GltfTexture> textures,
+            bool loadTextures)
+        {
+            List<GltfMaterial> result = new List<GltfMaterial>();
+            JsonElement materialArray = OptionalArray(gltf, "materials");
+
+            if (materialArray.ValueKind != JsonValueKind.Array)
+                return result;
+
+            foreach (JsonElement materialData in materialArray.EnumerateArray())
+            {
+                Material material = CreateDefaultMaterial();
+                material.name = GetString(
+                    materialData, "name", "GLTF_Material");
+
+                if (materialData.TryGetProperty(
+                        "pbrMetallicRoughness", out JsonElement pbr))
+                {
+                    Color baseColor = Color.white;
+                    if (pbr.TryGetProperty(
+                            "baseColorFactor", out JsonElement colorFactor) &&
+                        colorFactor.ValueKind == JsonValueKind.Array &&
+                        colorFactor.GetArrayLength() == 4)
+                    {
+                        baseColor = new Color(
+                            colorFactor[0].GetSingle(),
+                            colorFactor[1].GetSingle(),
+                            colorFactor[2].GetSingle(),
+                            colorFactor[3].GetSingle());
+                    }
+
+                    SetMaterialColor(
+                        material, "_BaseColor", "_Color", baseColor);
+
+                    float metallic = GetFloat(pbr, "metallicFactor", 1f);
+                    float roughness = GetFloat(pbr, "roughnessFactor", 1f);
+
+                    if (material.HasProperty("_Metallic"))
+                        material.SetFloat("_Metallic", metallic);
+                    if (material.HasProperty("_Smoothness"))
+                        material.SetFloat("_Smoothness", 1f - roughness);
+                    if (material.HasProperty("_Glossiness"))
+                        material.SetFloat("_Glossiness", 1f - roughness);
+
+                    if (loadTextures && pbr.TryGetProperty(
+                            "baseColorTexture", out JsonElement baseTextureInfo))
+                    {
+                        Texture2D baseTexture = ResolveTexture(
+                            baseTextureInfo, images, textures);
+                        SetMaterialTexture(
+                            material, "_BaseMap", "_MainTex", baseTexture);
+                    }
+
+                    if (loadTextures && pbr.TryGetProperty(
+                            "metallicRoughnessTexture",
+                            out JsonElement metallicRoughnessInfo))
+                    {
+                        Texture2D source = ResolveTexture(
+                            metallicRoughnessInfo, images, textures);
+
+                        if (source != null)
+                        {
+                            Texture2D packed = PackMetallicRoughness(source);
+                            if (material.HasProperty("_MetallicGlossMap"))
+                            {
+                                material.SetTexture("_MetallicGlossMap", packed);
+                                material.EnableKeyword("_METALLICGLOSSMAP");
+                            }
+                        }
+                    }
+                }
+
+                if (loadTextures && materialData.TryGetProperty(
+                        "normalTexture", out JsonElement normalInfo))
+                {
+                    Texture2D normalTexture = ResolveTexture(
+                        normalInfo, images, textures);
+                    SetMaterialTexture(
+                        material, "_BumpMap", "_BumpMap", normalTexture);
+
+                    if (normalTexture != null &&
+                        material.HasProperty("_BumpScale"))
+                    {
+                        material.SetFloat(
+                            "_BumpScale", GetFloat(normalInfo, "scale", 1f));
+                        material.EnableKeyword("_NORMALMAP");
+                    }
+                }
+
+                if (loadTextures && materialData.TryGetProperty(
+                        "emissiveTexture", out JsonElement emissiveInfo))
+                {
+                    Texture2D emissiveTexture = ResolveTexture(
+                        emissiveInfo, images, textures);
+                    if (emissiveTexture != null &&
+                        material.HasProperty("_EmissionMap"))
+                    {
+                        material.SetTexture("_EmissionMap", emissiveTexture);
+                        material.EnableKeyword("_EMISSION");
+                    }
+                }
+
+                if (materialData.TryGetProperty(
+                        "emissiveFactor", out JsonElement emissiveFactor) &&
+                    emissiveFactor.ValueKind == JsonValueKind.Array &&
+                    emissiveFactor.GetArrayLength() == 3)
+                {
+                    Color emissive = new Color(
+                        emissiveFactor[0].GetSingle(),
+                        emissiveFactor[1].GetSingle(),
+                        emissiveFactor[2].GetSingle(),
+                        1f);
+
+                    if (material.HasProperty("_EmissionColor"))
+                    {
+                        material.SetColor("_EmissionColor", emissive);
+                        if (emissive.maxColorComponent > 0f)
+                            material.EnableKeyword("_EMISSION");
+                    }
+                }
+
+                string alphaMode = GetString(
+                    materialData, "alphaMode", "OPAQUE");
+                if (alphaMode == "BLEND")
+                {
+                    ConfigureTransparentMaterial(material);
+                }
+                else if (alphaMode == "MASK")
+                {
+                    if (material.HasProperty("_AlphaClip"))
+                        material.SetFloat("_AlphaClip", 1f);
+                    if (material.HasProperty("_Cutoff"))
+                    {
+                        material.SetFloat(
+                            "_Cutoff", GetFloat(materialData, "alphaCutoff", 0.5f));
+                    }
+                    material.EnableKeyword("_ALPHATEST_ON");
+                }
+
+                if (GetBool(materialData, "doubleSided", false))
+                {
+                    if (material.HasProperty("_Cull"))
+                        material.SetFloat("_Cull", 0f);
+                    material.SetInt(
+                        "_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+                }
+
+                result.Add(new GltfMaterial { Material = material });
+            }
+
+            return result;
+        }
+
+        private static void SetMaterialColor(
+            Material material,
+            string primaryProperty,
+            string fallbackProperty,
+            Color color)
+        {
+            if (material.HasProperty(primaryProperty))
+                material.SetColor(primaryProperty, color);
+            else if (material.HasProperty(fallbackProperty))
+                material.SetColor(fallbackProperty, color);
+        }
+
+        private static void SetMaterialTexture(
+            Material material,
+            string primaryProperty,
+            string fallbackProperty,
+            Texture texture)
+        {
+            if (texture == null)
+                return;
+
+            if (material.HasProperty(primaryProperty))
+                material.SetTexture(primaryProperty, texture);
+            else if (material.HasProperty(fallbackProperty))
+                material.SetTexture(fallbackProperty, texture);
+        }
+
+        private static Texture2D PackMetallicRoughness(Texture2D source)
+        {
+            Color[] pixels = source.GetPixels();
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                Color pixel = pixels[i];
+                // glTF stores metallic in blue and roughness in green.
+                // Unity Standard uses red for metallic and alpha for smoothness.
+                pixels[i] = new Color(pixel.b, 0f, 0f, 1f - pixel.g);
+            }
+
+            Texture2D packed = new Texture2D(
+                source.width, source.height, TextureFormat.RGBA32, true);
+            packed.name = source.name + "_MetallicSmoothness";
+            packed.SetPixels(pixels);
+            packed.Apply(true, false);
+            packed.wrapMode = source.wrapMode;
+            packed.filterMode = source.filterMode;
+            packed.anisoLevel = source.anisoLevel;
+            return packed;
+        }
+
+        private static void ConfigureTransparentMaterial(Material material)
+        {
+            if (material.HasProperty("_Surface"))
+                material.SetFloat("_Surface", 1f);
+            if (material.HasProperty("_Mode"))
+                material.SetFloat("_Mode", 3f);
+
+            material.SetOverrideTag("RenderType", "Transparent");
+            material.SetInt(
+                "_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            material.SetInt(
+                "_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            material.SetInt("_ZWrite", 0);
+            material.DisableKeyword("_ALPHATEST_ON");
+            material.EnableKeyword("_ALPHABLEND_ON");
+            material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            material.renderQueue =
+                (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        private static float GetFloat(
+            JsonElement element,
+            string name,
+            float fallback)
+        {
+            return element.TryGetProperty(name, out JsonElement value) &&
+                   value.ValueKind == JsonValueKind.Number
+                ? value.GetSingle()
+                : fallback;
         }
 
         private static Vector3[] ReadVector3(
