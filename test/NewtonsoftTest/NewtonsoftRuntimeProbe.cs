@@ -7,10 +7,11 @@ using BepInEx.Unity.IL2CPP;
 [BepInPlugin(
     "somerandommaid.ultradroid.newtonsoftprobe",
     "ULTRADROID Newtonsoft Probe",
-    "0.6.0")]
+    "0.7.0")]
 public class NewtonsoftRuntimeProbe : BasePlugin
 {
     private Assembly jsonAssembly = null!;
+
     private Type jObjectType = null!;
     private Type jTokenType = null!;
     private Type jArrayType = null!;
@@ -24,7 +25,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
     public override void Load()
     {
         Log.LogInfo("========================================");
-        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.6.0");
+        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.7.0");
         Log.LogInfo("========================================");
 
         try
@@ -74,7 +75,8 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         }
         catch (Exception ex)
         {
-            Log.LogError("Probe initialization failed: " + Unwrap(ex));
+            Log.LogError(
+                "Probe initialization failed: " + Unwrap(ex));
         }
     }
 
@@ -132,6 +134,13 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         throw new SkipTestException(reason);
     }
 
+    private Type? FindType(string name)
+    {
+        return AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => a.GetType(name))
+            .FirstOrDefault(t => t != null);
+    }
+
     private object CreateStringReader(string text)
     {
         var type = FindType("Il2CppSystem.IO.StringReader")
@@ -146,6 +155,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
     private object CreateJsonReader(string text)
     {
         var readerType = GetJsonType("Newtonsoft.Json.JsonTextReader");
+
         var textReaderType = FindType("Il2CppSystem.IO.TextReader")
             ?? throw new Exception("IL2CPP TextReader not found.");
 
@@ -153,13 +163,6 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             ?? throw new Exception("JsonTextReader(TextReader) missing.");
 
         return ctor.Invoke(new[] { CreateStringReader(text) });
-    }
-
-    private Type? FindType(string name)
-    {
-        return AppDomain.CurrentDomain.GetAssemblies()
-            .Select(a => a.GetType(name))
-            .FirstOrDefault(t => t != null);
     }
 
     private object ParseObject(string json)
@@ -207,7 +210,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
                 ?? throw new Exception("JToken.ReadFrom returned null.");
         }
 
-        var load = jTokenType.GetMethods(
+        method = jTokenType.GetMethods(
                 BindingFlags.Public | BindingFlags.Static)
             .FirstOrDefault(m =>
             {
@@ -220,105 +223,152 @@ public class NewtonsoftRuntimeProbe : BasePlugin
                        p[0].ParameterType.IsInstanceOfType(reader);
             });
 
-        if (load == null)
+        if (method == null)
             throw new Exception("No compatible JToken.ReadFrom found.");
 
-        return load.Invoke(null, new object?[] { reader, null })
+        return method.Invoke(null, new object?[] { reader, null })
             ?? throw new Exception("JToken.ReadFrom returned null.");
+    }
+
+    // Resolve the indexer on the actual object's type.
+    // If the proxy's runtime type hides the indexer, walk its base types.
+    private MethodInfo FindIndexerGetter(object obj, Type parameterType)
+    {
+        Type? current = obj.GetType();
+
+        while (current != null)
+        {
+            var getter = current.GetMethods(
+                    BindingFlags.Public |
+                    BindingFlags.Instance |
+                    BindingFlags.DeclaredOnly)
+                .FirstOrDefault(m =>
+                {
+                    if (m.Name != "get_Item")
+                        return false;
+
+                    var p = m.GetParameters();
+
+                    return p.Length == 1 &&
+                           p[0].ParameterType == parameterType;
+                });
+
+            if (getter != null)
+                return getter;
+
+            current = current.BaseType;
+        }
+
+        throw new Exception(
+            "Indexer getter for " + parameterType.FullName +
+            " not found on " + obj.GetType().FullName);
     }
 
     private object? GetProperty(object obj, string name)
     {
-        var indexer = jObjectType.GetProperty(
-            "Item", new[] { typeof(string) })
-            ?? throw new Exception("JObject string indexer missing.");
-
-        return indexer.GetValue(obj, new object[] { name });
+        var getter = FindIndexerGetter(obj, typeof(string));
+        return getter.Invoke(obj, new object[] { name });
     }
 
     private object? GetArrayItem(object obj, int index)
     {
-        var indexer = jArrayType.GetProperty(
-            "Item", new[] { typeof(int) })
-            ?? throw new Exception("JArray integer indexer missing.");
-
-        return indexer.GetValue(obj, new object[] { index });
+        var getter = FindIndexerGetter(obj, typeof(int));
+        return getter.Invoke(obj, new object[] { index });
     }
 
     private object? GetTokenValue(object token)
     {
-        var type = token.GetType();
-
-        var property = type.GetProperty(
-            "Value",
-            BindingFlags.Public |
-            BindingFlags.Instance |
-            BindingFlags.FlattenHierarchy);
-
-        if (property != null && property.GetIndexParameters().Length == 0)
-        {
-            try
-            {
-                return property.GetValue(token);
-            }
-            catch
-            {
-                // Try other token value APIs below.
-            }
-        }
-
-        var valueMethod = type.GetMethods(
+        // Try the runtime wrapper type first.
+        var getter = token.GetType().GetMethods(
                 BindingFlags.Public | BindingFlags.Instance)
             .FirstOrDefault(m =>
                 m.Name == "get_Value" &&
                 m.GetParameters().Length == 0);
 
-        if (valueMethod != null)
-            return valueMethod.Invoke(token, null);
+        if (getter != null)
+        {
+            try
+            {
+                return getter.Invoke(token, null);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning(
+                    "Runtime get_Value failed: " +
+                    Unwrap(ex).Message);
+            }
+        }
+
+        // Then try JValue's declared getter.
+        getter = jValueType.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(m =>
+                m.Name == "get_Value" &&
+                m.GetParameters().Length == 0);
+
+        if (getter != null)
+        {
+            try
+            {
+                return getter.Invoke(token, null);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning(
+                    "JValue get_Value failed: " +
+                    Unwrap(ex).Message);
+            }
+        }
 
         return null;
     }
 
-    private string DescribeToken(object? token)
+    private object ConvertToken(object token, Type targetType)
     {
-        if (token == null)
-            return "<null reference>";
+        var conversion = jTokenType.GetMethods(
+                BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(m =>
+                m.Name == "op_Explicit" &&
+                m.ReturnType == targetType &&
+                m.GetParameters().Length == 1);
 
-        string typeName = token.GetType().FullName ?? token.GetType().Name;
-        object? value = GetTokenValue(token);
-
-        string valueText;
+        if (conversion == null)
+        {
+            throw new Exception(
+                "Explicit token conversion to " +
+                targetType.FullName + " not found.");
+        }
 
         try
         {
-            valueText = value == null ? "<null>" : value.ToString() ?? "<null>";
+            return conversion.Invoke(null, new[] { token })
+                ?? throw new Exception(
+                    "Conversion returned null for " +
+                    targetType.FullName);
         }
         catch (Exception ex)
         {
-            valueText = "<value conversion failed: " +
-                        Unwrap(ex).GetType().Name + ">";
+            throw new Exception(
+                "Conversion to " + targetType.FullName +
+                " failed: " + Unwrap(ex));
         }
-
-        string tokenText;
-
-        try
-        {
-            tokenText = token.ToString() ?? "<null>";
-        }
-        catch
-        {
-            tokenText = "<ToString failed>";
-        }
-
-        return "wrapper=" + typeName +
-               "; valueType=" + (value?.GetType().FullName ?? "<null>") +
-               "; value=" + valueText +
-               "; tokenToString=" + tokenText;
     }
 
     private void LogToken(string label, object? token)
     {
-        Log.LogInfo(label + ": " + DescribeToken(token));
+        if (token == null)
+        {
+            Log.LogInfo(label + ": <null reference>");
+            return;
+        }
+
+        object? value = GetTokenValue(token);
+
+        Log.LogInfo(
+            label +
+            ": wrapper=" + token.GetType().FullName +
+            "; valueType=" + (value?.GetType().FullName ?? "<null>") +
+            "; value=" + (value?.ToString() ?? "<null>"));
     }
 
     private string Serialize(object token)
@@ -336,7 +386,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
                        p[0].ParameterType.IsInstanceOfType(token);
             })
             ?? throw new Exception(
-                "Compatible JsonConvert.SerializeObject overload missing.");
+                "Compatible SerializeObject overload missing.");
 
         return method.Invoke(null, new[] { token })?.ToString()
             ?? throw new Exception("Serialization returned null.");
@@ -425,7 +475,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         Check(jValueType != null, "JValue missing.");
         Check(jsonConvertType != null, "JsonConvert missing.");
 
-        Log.LogInfo("All required JSON types were found.");
+        Log.LogInfo("All required JSON types found.");
     }
 
     private void TestStringProperty()
@@ -434,7 +484,13 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var token = GetProperty(obj, "probe");
 
         Check(token != null, "probe token missing.");
-        LogToken("String token", token);
+
+        var value = ConvertToken(token!, typeof(string));
+
+        Log.LogInfo("Extracted string: " + value);
+
+        Check((string)value == "ULTRADROID",
+            "String value did not match.");
     }
 
     private void TestIntegerProperty()
@@ -443,7 +499,13 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var token = GetProperty(obj, "number");
 
         Check(token != null, "number token missing.");
-        LogToken("Integer token", token);
+
+        var value = ConvertToken(token!, typeof(long));
+
+        Log.LogInfo("Extracted integer: " + value);
+
+        Check((long)value == 123L,
+            "Integer value did not match.");
     }
 
     private void TestBooleanProperty()
@@ -452,7 +514,13 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var token = GetProperty(obj, "enabled");
 
         Check(token != null, "enabled token missing.");
-        LogToken("Boolean token", token);
+
+        var value = ConvertToken(token!, typeof(bool));
+
+        Log.LogInfo("Extracted Boolean: " + value);
+
+        Check((bool)value,
+            "Boolean value did not match.");
     }
 
     private void TestMissingProperty()
@@ -460,8 +528,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var obj = ParseObject("{\"present\":1}");
         var token = GetProperty(obj, "missing");
 
-        Check(token == null, "Missing property unexpectedly returned a token.");
-        Log.LogInfo("Missing property correctly returned null.");
+        Check(token == null,
+            "Missing property unexpectedly returned a token.");
+
+        Log.LogInfo("Missing property returned null.");
     }
 
     private void TestNestedObject()
@@ -478,36 +548,53 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var value = GetProperty(inner!, "value");
         Check(value != null, "nested value missing.");
 
-        LogToken("Nested value", value);
+        var number = ConvertToken(value!, typeof(long));
+
+        Check((long)number == 42L, "Nested number was incorrect.");
+
+        Log.LogInfo("Nested value extracted: " + number);
     }
 
     private void TestParsedArray()
     {
-        var token = ParseToken("[\"alpha\",7,true,null]");
+        var array = ParseToken("[\"alpha\",7,true,null]");
 
-        LogToken("Parsed array token", token);
+        Check(GetArrayItem(array, 0) != null, "Array item 0 missing.");
+        Check(GetArrayItem(array, 1) != null, "Array item 1 missing.");
+        Check(GetArrayItem(array, 2) != null, "Array item 2 missing.");
+        Check(GetArrayItem(array, 3) != null, "Array item 3 missing.");
 
-        var array = token;
-        var first = GetArrayItem(array, 0);
-        var second = GetArrayItem(array, 1);
-        var third = GetArrayItem(array, 2);
-        var fourth = GetArrayItem(array, 3);
+        var first = ConvertToken(GetArrayItem(array, 0)!, typeof(string));
+        var second = ConvertToken(GetArrayItem(array, 1)!, typeof(long));
+        var third = ConvertToken(GetArrayItem(array, 2)!, typeof(bool));
 
-        LogToken("array[0]", first);
-        LogToken("array[1]", second);
-        LogToken("array[2]", third);
-        LogToken("array[3]", fourth);
+        Check((string)first == "alpha", "Array string incorrect.");
+        Check((long)second == 7L, "Array integer incorrect.");
+        Check((bool)third, "Array Boolean incorrect.");
 
-        Check(first != null, "First array item missing.");
-        Check(second != null, "Second array item missing.");
-        Check(third != null, "Third array item missing.");
+        Log.LogInfo(
+            "Array values: " + first + ", " + second + ", " + third);
+        Log.LogInfo("Array JSON: " + Serialize(array));
     }
 
     private void TestJValues()
     {
-        LogToken("String JValue", CreateJValue("hello"));
-        LogToken("Integer JValue", CreateJValue(42L));
-        LogToken("Boolean JValue", CreateJValue(true));
+        var text = CreateJValue("hello");
+        var number = CreateJValue(42L);
+        var boolean = CreateJValue(true);
+
+        LogToken("String JValue", text);
+        LogToken("Integer JValue", number);
+        LogToken("Boolean JValue", boolean);
+
+        Check((string)ConvertToken(text, typeof(string)) == "hello",
+            "JValue string conversion failed.");
+
+        Check((long)ConvertToken(number, typeof(long)) == 42L,
+            "JValue integer conversion failed.");
+
+        Check((bool)ConvertToken(boolean, typeof(bool)),
+            "JValue Boolean conversion failed.");
     }
 
     private void TestBuildObject()
@@ -515,14 +602,16 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var obj = CreateJObject();
 
         AddObjectProperty(obj, "name", CreateJValue("ULTRADROID"));
-        AddObjectProperty(obj, "version", CreateJValue(6L));
+        AddObjectProperty(obj, "version", CreateJValue(7L));
         AddObjectProperty(obj, "enabled", CreateJValue(true));
 
-        Log.LogInfo("Constructed object JSON: " + Serialize(obj));
+        var json = Serialize(obj);
+        Log.LogInfo("Constructed object JSON: " + json);
 
-        Check(GetProperty(obj, "name") != null, "Constructed name missing.");
-        Check(GetProperty(obj, "version") != null, "Constructed version missing.");
-        Check(GetProperty(obj, "enabled") != null, "Constructed enabled missing.");
+        Check(json.Contains("\"name\""), "name key missing.");
+        Check(json.Contains("\"ULTRADROID\""), "name value missing.");
+        Check(json.Contains("\"version\""), "version key missing.");
+        Check(json.Contains("\"enabled\""), "enabled key missing.");
     }
 
     private void TestBuildArray()
@@ -533,11 +622,12 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         AddArrayItem(array, CreateJValue(2L));
         AddArrayItem(array, CreateJValue(false));
 
-        Log.LogInfo("Constructed array JSON: " + Serialize(array));
+        var json = Serialize(array);
+        Log.LogInfo("Constructed array JSON: " + json);
 
-        LogToken("Constructed array[0]", GetArrayItem(array, 0));
-        LogToken("Constructed array[1]", GetArrayItem(array, 1));
-        LogToken("Constructed array[2]", GetArrayItem(array, 2));
+        Check(json.Contains("\"first\""), "String array item missing.");
+        Check(json.Contains("2"), "Integer array item missing.");
+        Check(json.Contains("false"), "Boolean array item missing.");
     }
 
     private void TestSerializeObject()
@@ -547,8 +637,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
         Log.LogInfo("Serialized: " + json);
 
-        Check(json.Contains("\"message\""), "Serialized message key missing.");
-        Check(json.Contains("\"count\""), "Serialized count key missing.");
+        Check(json.Contains("\"message\""), "message key missing.");
+        Check(json.Contains("\"hello\""), "message value missing.");
+        Check(json.Contains("\"count\""), "count key missing.");
+        Check(json.Contains("42"), "count value missing.");
     }
 
     private void TestSerializeConstructed()
@@ -558,11 +650,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         AddObjectProperty(obj, "test", CreateJValue("passed"));
 
         var json = Serialize(obj);
-
         Log.LogInfo("Constructed JSON: " + json);
 
         Check(json.Contains("\"test\""), "Serialized key missing.");
-        Check(json.Contains("passed"), "Serialized value missing.");
+        Check(json.Contains("\"passed\""), "Serialized value missing.");
     }
 
     private void TestRoundTrip()
@@ -576,13 +667,16 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
         Log.LogInfo("Round-trip output: " + serialized);
 
-        Check(GetProperty(second, "name") != null, "name lost in round trip.");
-        Check(GetProperty(second, "count") != null, "count lost in round trip.");
-        Check(GetProperty(second, "enabled") != null, "enabled lost in round trip.");
+        var name = ConvertToken(GetProperty(second, "name")!,
+            typeof(string));
+        var count = ConvertToken(GetProperty(second, "count")!,
+            typeof(long));
+        var enabled = ConvertToken(GetProperty(second, "enabled")!,
+            typeof(bool));
 
-        LogToken("Round-trip name", GetProperty(second, "name"));
-        LogToken("Round-trip count", GetProperty(second, "count"));
-        LogToken("Round-trip enabled", GetProperty(second, "enabled"));
+        Check((string)name == "ULTRADROID", "Round-trip name incorrect.");
+        Check((long)count == 42L, "Round-trip count incorrect.");
+        Check((bool)enabled, "Round-trip enabled incorrect.");
     }
 
     private void TestEmptyObject()
@@ -591,8 +685,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var json = Serialize(obj);
 
         Log.LogInfo("Empty object serialized: " + json);
+
+        Check(json == "{}", "Empty object did not serialize as {}.");
         Check(GetProperty(obj, "anything") == null,
-            "Empty object returned an unexpected property.");
+            "Unexpected property in empty object.");
     }
 
     private void TestNullProperty()
@@ -600,9 +696,15 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         var obj = ParseObject("{\"value\":null}");
         var token = GetProperty(obj, "value");
 
-        Check(token != null, "Null property token was missing.");
+        Check(token != null, "Explicit null token missing.");
 
         LogToken("Explicit JSON null", token);
+
+        var json = Serialize(obj);
+        Check(json.Contains("\"value\""), "Null property key missing.");
+        Check(json.Contains("null"), "Null value missing from JSON.");
+
+        Log.LogInfo("Null property JSON: " + json);
     }
 
     private void TestUnicode()
@@ -614,14 +716,20 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
         Check(token != null, "Unicode token missing.");
 
-        LogToken("Unicode token", token);
+        var value = ConvertToken(token!, typeof(string));
+
+        Check((string)value == "café 東京 🚀",
+            "Unicode string did not match.");
 
         var serialized = Serialize(obj);
         Log.LogInfo("Unicode serialized: " + serialized);
 
         var second = ParseObject(serialized);
-        Check(GetProperty(second, "text") != null,
-            "Unicode property lost after round trip.");
+        var secondValue = ConvertToken(
+            GetProperty(second, "text")!, typeof(string));
+
+        Check((string)secondValue == "café 東京 🚀",
+            "Unicode value changed during round trip.");
     }
 
     private void TestMalformedJson()
@@ -632,8 +740,9 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         }
         catch (Exception ex)
         {
-            Log.LogInfo("Malformed JSON rejected: " +
-                        Unwrap(ex).GetType().FullName);
+            Log.LogInfo(
+                "Malformed JSON rejected: " +
+                Unwrap(ex).GetType().FullName);
             return;
         }
 
@@ -642,20 +751,23 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
     private void TestDeserializeString()
     {
-        TestGenericDeserialize(typeof(string), "\"hello\"");
+        TestGenericDeserialize(typeof(string), "\"hello\"", "hello");
     }
 
     private void TestDeserializeInteger()
     {
-        TestGenericDeserialize(typeof(long), "123");
+        TestGenericDeserialize(typeof(long), "123", "123");
     }
 
     private void TestDeserializeBoolean()
     {
-        TestGenericDeserialize(typeof(bool), "true");
+        TestGenericDeserialize(typeof(bool), "true", "True");
     }
 
-    private void TestGenericDeserialize(Type targetType, string json)
+    private void TestGenericDeserialize(
+        Type targetType,
+        string json,
+        string expected)
     {
         var method = jsonConvertType.GetMethods(
                 BindingFlags.Public | BindingFlags.Static)
@@ -666,65 +778,45 @@ public class NewtonsoftRuntimeProbe : BasePlugin
                 m.GetParameters()[0].ParameterType == typeof(string));
 
         if (method == null)
-        {
-            Skip("Generic DeserializeObject<T>(string) not exposed.");
-            return;
-        }
+            Skip("Generic DeserializeObject<T>(string) missing.");
 
         MethodInfo closed;
 
         try
         {
-            closed = method.MakeGenericMethod(targetType);
+            closed = method!.MakeGenericMethod(targetType);
         }
         catch (Exception ex)
         {
-            Skip("Could not close generic method: " + Unwrap(ex).Message);
+            Skip("Could not close generic method: " +
+                 Unwrap(ex).Message);
             return;
         }
 
-        object? result;
+        var result = closed.Invoke(null, new object[] { json });
+        var text = result?.ToString() ?? "<null>";
 
-        try
-        {
-            result = closed.Invoke(null, new object[] { json });
-        }
-        catch (Exception ex)
-        {
-            throw new Exception("Generic deserialization invocation failed: " +
-                                Unwrap(ex));
-        }
+        Log.LogInfo("Deserialized " + targetType.FullName + ": " + text);
 
-        Log.LogInfo(
-            "Deserialized " + targetType.FullName + ": " +
-            (result?.ToString() ?? "<null>"));
+        Check(text == expected,
+            "Expected '" + expected + "', received '" + text + "'.");
     }
 
     private void TestDeserializeObject()
     {
-        var method = jsonConvertType.GetMethods(
+        var candidates = jsonConvertType.GetMethods(
                 BindingFlags.Public | BindingFlags.Static)
-            .FirstOrDefault(m =>
-            {
-                if (m.Name != "DeserializeObject" ||
-                    m.IsGenericMethodDefinition)
-                    return false;
+            .Where(m =>
+                m.Name == "DeserializeObject" &&
+                !m.IsGenericMethodDefinition)
+            .ToArray();
 
-                var p = m.GetParameters();
+        foreach (var method in candidates)
+            Log.LogInfo("Deserialize overload: " + method);
 
-                return p.Length == 3 &&
-                       p[0].ParameterType == typeof(string) &&
-                       p[1].ParameterType.FullName == "Il2CppSystem.Type";
-            });
-
-        if (method == null)
-        {
-            Skip("Non-generic DeserializeObject(string, Il2CppSystem.Type, settings) missing.");
-            return;
-        }
-
-        Skip("JObject deserialization needs a confirmed Il2CppSystem.Type instance; " +
-             "we will derive the correct type conversion from the runtime.");
+        Skip(
+            "Still need to establish how to create the matching " +
+            "Il2CppSystem.Type for JObject.");
     }
 
     private void InspectConversions()
@@ -734,8 +826,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             Log.LogInfo("--- Conversion APIs: " + type.FullName + " ---");
 
             foreach (var method in type.GetMethods(
-                BindingFlags.Public | BindingFlags.Instance |
-                BindingFlags.Static | BindingFlags.DeclaredOnly))
+                BindingFlags.Public |
+                BindingFlags.Instance |
+                BindingFlags.Static |
+                BindingFlags.DeclaredOnly))
             {
                 if (method.Name.Contains("ToObject") ||
                     method.Name.Contains("Value") ||
@@ -747,7 +841,8 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             }
 
             foreach (var property in type.GetProperties(
-                BindingFlags.Public | BindingFlags.Instance |
+                BindingFlags.Public |
+                BindingFlags.Instance |
                 BindingFlags.DeclaredOnly))
             {
                 if (property.Name.Contains("Value") ||
