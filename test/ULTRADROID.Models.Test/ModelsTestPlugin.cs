@@ -71,7 +71,6 @@ namespace ULTRADROID.Models.Test
 
         private bool gameplayDetected;
         private bool modelLoadAttempted;
-        private bool sceneEventSubscribed;
 
         private Camera selectedCamera;
         private ModelInstance instance;
@@ -85,20 +84,14 @@ namespace ULTRADROID.Models.Test
             ModelsTestPlugin.Log.LogInfo(
                 "[Runtime] Awake called. Component is alive.");
         }
-
+        
         private void OnEnable()
         {
             ModelsTestPlugin.Log.LogInfo(
                 "[Runtime] OnEnable called.");
-
-            if (!sceneEventSubscribed)
-            {
-                SceneManager.sceneLoaded += OnSceneLoaded;
-                sceneEventSubscribed = true;
-            }
-
+                
             LogCurrentScenes("OnEnable");
-        }
+            }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
