@@ -64,13 +64,14 @@ namespace ULTRADROID.Models.Test
     public class ModelTestLoader : MonoBehaviour
     {
         private float nextDiagnosticTime;
-        private float gameplayDetectedTime;
+        private float nextModelAttemptTime;
 
         private string lastActiveSceneName = "";
         private string detectedGameplayScene = "";
 
         private bool gameplayDetected;
         private bool modelLoadAttempted;
+        private bool sceneEventSubscribed;
 
         private Camera selectedCamera;
         private ModelInstance instance;
@@ -79,16 +80,65 @@ namespace ULTRADROID.Models.Test
         {
         }
 
-        private void Update()
+        private void Awake()
+        {
+            ModelsTestPlugin.Log.LogInfo(
+                "[Runtime] Awake called. Component is alive.");
+        }
+
+        private void OnEnable()
+        {
+            ModelsTestPlugin.Log.LogInfo(
+                "[Runtime] OnEnable called.");
+
+            if (!sceneEventSubscribed)
+            {
+                SceneManager.sceneLoaded += OnSceneLoaded;
+                sceneEventSubscribed = true;
+            }
+
+            LogCurrentScenes("OnEnable");
+        }
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             try
             {
-                DiagnoseScenes();
+                ModelsTestPlugin.Log.LogInfo(
+                    $"[SceneEvent] Scene loaded: '{scene.name}', " +
+                    $"mode={mode}, loaded={scene.isLoaded}");
+
+                if (IsPlayableSceneName(scene.name))
+                    OnGameplaySceneDetected(scene.name);
+            }
+            catch (Exception ex)
+            {
+                ModelsTestPlugin.Log.LogError(
+                    $"[SceneEvent] Error: {ex}");
+            }
+        }
+
+        public void Update()
+        {
+            try
+            {
+                // This heartbeat must appear every three seconds if Update runs.
+                if (Time.unscaledTime >= nextDiagnosticTime)
+                {
+                    nextDiagnosticTime = Time.unscaledTime + 3f;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Heartbeat] ModelTestLoader.Update IS RUNNING.");
+
+                    LogCurrentScenes("Heartbeat");
+                }
+
+                DiagnoseActiveScene();
 
                 if (!gameplayDetected || modelLoadAttempted)
                     return;
 
-                if (Time.time - gameplayDetectedTime < 2f)
+                if (Time.unscaledTime < nextModelAttemptTime)
                     return;
 
                 TryLoadModel();
@@ -96,16 +146,43 @@ namespace ULTRADROID.Models.Test
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogError(
-                    $"[Runtime] Unhandled error: {ex}");
+                    $"[Runtime] Update exception: {ex}");
             }
         }
 
-        private void DiagnoseScenes()
+        private void LogCurrentScenes(string source)
         {
-            Scene activeScene = SceneManager.GetActiveScene();
+            try
+            {
+                Scene active = SceneManager.GetActiveScene();
 
-            string activeName = activeScene.IsValid()
-                ? activeScene.name
+                ModelsTestPlugin.Log.LogInfo(
+                    $"[Scene:{source}] Active='{active.name}', " +
+                    $"valid={active.IsValid()}, loaded={active.isLoaded}, " +
+                    $"sceneCount={SceneManager.sceneCount}");
+
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    Scene scene = SceneManager.GetSceneAt(i);
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        $"[Scene:{source}] [{i}] '{scene.name}', " +
+                        $"valid={scene.IsValid()}, loaded={scene.isLoaded}");
+                }
+            }
+            catch (Exception ex)
+            {
+                ModelsTestPlugin.Log.LogError(
+                    $"[Scene:{source}] Scene inspection failed: {ex}");
+            }
+        }
+
+        private void DiagnoseActiveScene()
+        {
+            Scene active = SceneManager.GetActiveScene();
+
+            string activeName = active.IsValid()
+                ? active.name
                 : "<invalid>";
 
             if (activeName != lastActiveSceneName)
@@ -113,81 +190,25 @@ namespace ULTRADROID.Models.Test
                 lastActiveSceneName = activeName;
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Scene] Active scene changed to: '{activeName}'");
+                    $"[ScenePoll] Active scene changed: '{activeName}'");
             }
 
-            // Report diagnostics every three seconds.
-            if (Time.time >= nextDiagnosticTime)
+            if (IsPlayableSceneName(activeName))
+                OnGameplaySceneDetected(activeName);
+
+            // Also search loaded scenes in case gameplay is additive.
+            for (int i = 0; i < SceneManager.sceneCount; i++)
             {
-                nextDiagnosticTime = Time.time + 3f;
+                Scene scene = SceneManager.GetSceneAt(i);
 
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Diagnostic] Update is running. Active scene: '{activeName}'");
-
-                LogAllLoadedScenes();
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Diagnostic] Gameplay detected: {gameplayDetected}; " +
-                    $"scene: '{detectedGameplayScene}'; " +
-                    $"load attempted: {modelLoadAttempted}");
-            }
-
-            if (gameplayDetected)
-            {
-                if (activeName != detectedGameplayScene &&
-                    IsPlayableSceneName(activeName))
+                if (scene.IsValid() &&
+                    scene.isLoaded &&
+                    IsPlayableSceneName(scene.name))
                 {
-                    OnGameplaySceneDetected(activeName);
+                    OnGameplaySceneDetected(scene.name);
+                    break;
                 }
-
-                return;
             }
-
-            // Search all loaded scenes, not only the active scene.
-            int sceneCount = SceneManager.sceneCount;
-
-            for (int i = 0; i < sceneCount; i++)
-            {
-                Scene scene = SceneManager.GetSceneAt(i);
-
-                if (!scene.IsValid() || !scene.isLoaded)
-                    continue;
-
-                if (!IsPlayableSceneName(scene.name))
-                    continue;
-
-                OnGameplaySceneDetected(scene.name);
-                break;
-            }
-        }
-
-        private void LogAllLoadedScenes()
-        {
-            int count = SceneManager.sceneCount;
-
-            if (count == 0)
-            {
-                ModelsTestPlugin.Log.LogWarning(
-                    "[Scene] Unity reports zero loaded scenes.");
-                return;
-            }
-
-            string sceneList = "";
-
-            for (int i = 0; i < count; i++)
-            {
-                Scene scene = SceneManager.GetSceneAt(i);
-
-                if (i > 0)
-                    sceneList += " | ";
-
-                sceneList +=
-                    $"[{i}] '{scene.name}' " +
-                    $"(loaded={scene.isLoaded}, valid={scene.IsValid()})";
-            }
-
-            ModelsTestPlugin.Log.LogInfo(
-                $"[Scene] All loaded scenes: {sceneList}");
         }
 
         private bool IsPlayableSceneName(string sceneName)
@@ -197,37 +218,27 @@ namespace ULTRADROID.Models.Test
 
             string name = sceneName.Trim();
 
-            // Sandbox.
             if (string.Equals(
-                name,
-                "uk_construct",
+                name, "uk_construct",
                 StringComparison.OrdinalIgnoreCase))
-            {
                 return true;
-            }
 
-            // Campaign scenes.
             if (name.StartsWith(
                 "Level ",
                 StringComparison.OrdinalIgnoreCase))
-            {
                 return true;
-            }
 
-            // Raw identifiers: 0-1, P-1, A-1, E-1, etc.
+            // Examples: 0-1, P-1, A-1, E-1.
             if (name.Length == 3 &&
                 name[1] == '-' &&
                 char.IsDigit(name[2]))
             {
                 char prefix = char.ToUpperInvariant(name[0]);
 
-                if (char.IsDigit(prefix) ||
-                    prefix == 'P' ||
-                    prefix == 'A' ||
-                    prefix == 'E')
-                {
-                    return true;
-                }
+                return char.IsDigit(prefix) ||
+                       prefix == 'P' ||
+                       prefix == 'A' ||
+                       prefix == 'E';
             }
 
             return false;
@@ -236,39 +247,39 @@ namespace ULTRADROID.Models.Test
         private void OnGameplaySceneDetected(string sceneName)
         {
             if (gameplayDetected &&
-                detectedGameplayScene == sceneName)
-            {
+                string.Equals(
+                    detectedGameplayScene,
+                    sceneName,
+                    StringComparison.OrdinalIgnoreCase))
                 return;
-            }
 
             ModelsTestPlugin.Log.LogInfo(
-                $"[Gameplay] Recognized scene: '{sceneName}'");
+                $"[Gameplay] Recognized candidate scene: '{sceneName}'");
 
             detectedGameplayScene = sceneName;
             gameplayDetected = true;
-            gameplayDetectedTime = Time.time;
             modelLoadAttempted = false;
 
-            DestroyCurrentModel();
+            // Allow the game a little time to initialize its camera.
+            nextModelAttemptTime = Time.unscaledTime + 2f;
+
             selectedCamera = null;
+            DestroyCurrentModel();
 
             ModelsTestPlugin.Log.LogInfo(
-                "[Gameplay] Waiting two seconds for initialization.");
+                "[Gameplay] Model load scheduled in two seconds.");
         }
 
         private Camera FindUsableCamera()
         {
-            ModelsTestPlugin.Log.LogInfo(
-                "[Camera] Searching for a usable camera...");
+            Camera main = Camera.main;
 
-            Camera mainCamera = Camera.main;
-
-            if (mainCamera != null && mainCamera.isActiveAndEnabled)
+            if (main != null && main.isActiveAndEnabled)
             {
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Camera] Selected Camera.main: '{mainCamera.name}'");
+                    $"[Camera] Camera.main='{main.name}'");
 
-                return mainCamera;
+                return main;
             }
 
             Camera[] cameras = FindObjectsOfType<Camera>();
@@ -281,43 +292,36 @@ namespace ULTRADROID.Models.Test
                 if (camera == null || !camera.isActiveAndEnabled)
                     continue;
 
-                if (camera.CompareTag("MainCamera"))
-                {
-                    ModelsTestPlugin.Log.LogInfo(
-                        $"[Camera] Selected tagged camera: '{camera.name}'");
+                ModelsTestPlugin.Log.LogInfo(
+                    $"[Camera] Candidate='{camera.name}', " +
+                    $"tag='{camera.tag}', " +
+                    $"position={camera.transform.position}");
 
+                if (camera.CompareTag("MainCamera"))
                     return camera;
-                }
             }
 
             foreach (Camera camera in cameras)
             {
-                if (camera == null || !camera.isActiveAndEnabled)
-                    continue;
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Camera] Selected fallback camera: '{camera.name}'");
-
-                return camera;
+                if (camera != null && camera.isActiveAndEnabled)
+                    return camera;
             }
-
-            ModelsTestPlugin.Log.LogWarning(
-                "[Camera] No active camera was found.");
 
             return null;
         }
 
         private void TryLoadModel()
         {
-            modelLoadAttempted = true;
-
             ModelsTestPlugin.Log.LogInfo(
-                $"[Gameplay] Attempting model load in '{detectedGameplayScene}'.");
+                $"[Model] Attempting load in '{detectedGameplayScene}'.");
 
             if (!File.Exists(ModelsTestPlugin.ModelPath))
             {
+                modelLoadAttempted = true;
+
                 ModelsTestPlugin.Log.LogError(
-                    $"[Model] File does not exist: {ModelsTestPlugin.ModelPath}");
+                    $"[Model] File missing: {ModelsTestPlugin.ModelPath}");
+
                 return;
             }
 
@@ -326,12 +330,13 @@ namespace ULTRADROID.Models.Test
             if (selectedCamera == null)
             {
                 ModelsTestPlugin.Log.LogWarning(
-                    "[Model] No usable camera yet. Will retry.");
+                    "[Camera] No usable camera yet. Retrying in three seconds.");
 
-                modelLoadAttempted = false;
-                gameplayDetectedTime = Time.time + 3f;
+                nextModelAttemptTime = Time.unscaledTime + 3f;
                 return;
             }
+
+            modelLoadAttempted = true;
 
             try
             {
@@ -351,34 +356,25 @@ namespace ULTRADROID.Models.Test
                     ModelsTestPlugin.ModelPath,
                     options);
 
-                if (instance == null)
+                if (instance == null || instance.Root == null)
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Model] LoadGLB returned null.");
-                    return;
-                }
+                        "[Model] LoadGLB returned no valid root.");
 
-                if (instance.Root == null)
-                {
-                    ModelsTestPlugin.Log.LogError(
-                        "[Model] ModelInstance.Root is null.");
                     return;
                 }
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] LOAD SUCCESS. Root: '{instance.Root.name}'");
+                    $"[Model] LOAD SUCCESS: '{instance.Root.name}'");
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Camera: '{selectedCamera.name}'");
+                    $"[Model] Camera='{selectedCamera.name}', " +
+                    $"position={selectedCamera.transform.position}");
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Root position: {instance.Root.transform.position}");
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Root local position: {instance.Root.transform.localPosition}");
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Root local scale: {instance.Root.transform.localScale}");
+                    $"[Model] Root local position=" +
+                    $"{instance.Root.transform.localPosition}, " +
+                    $"scale={instance.Root.transform.localScale}");
 
                 LogModelRenderers(instance.Root);
             }
@@ -391,18 +387,15 @@ namespace ULTRADROID.Models.Test
 
         private void LogModelRenderers(GameObject root)
         {
-            if (root == null)
-                return;
-
             Renderer[] renderers =
                 root.GetComponentsInChildren<Renderer>(true);
 
-            MeshFilter[] meshFilters =
+            MeshFilter[] filters =
                 root.GetComponentsInChildren<MeshFilter>(true);
 
             ModelsTestPlugin.Log.LogInfo(
-                $"[Model] Renderer count: {renderers.Length}; " +
-                $"MeshFilter count: {meshFilters.Length}");
+                $"[Model] Renderers={renderers.Length}, " +
+                $"MeshFilters={filters.Length}");
 
             foreach (Renderer renderer in renderers)
             {
@@ -410,33 +403,49 @@ namespace ULTRADROID.Models.Test
                     continue;
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Renderer '{renderer.name}': " +
+                    $"[Renderer] '{renderer.name}', " +
                     $"enabled={renderer.enabled}, " +
                     $"active={renderer.gameObject.activeInHierarchy}, " +
                     $"bounds={renderer.bounds}");
             }
 
-            foreach (MeshFilter filter in meshFilters)
+            foreach (MeshFilter filter in filters)
             {
                 if (filter == null)
                     continue;
 
                 Mesh mesh = filter.sharedMesh;
 
-                if (mesh == null)
-                {
-                    ModelsTestPlugin.Log.LogWarning(
-                        $"[Model] MeshFilter '{filter.name}' has no mesh.");
-                }
-                else
-                {
-                    ModelsTestPlugin.Log.LogInfo(
-                        $"[Model] MeshFilter '{filter.name}': " +
-                        $"mesh='{mesh.name}', " +
-                        $"vertices={mesh.vertexCount}, " +
-                        $"submeshes={mesh.subMeshCount}");
-                }
+                ModelsTestPlugin.Log.LogInfo(
+                    mesh == null
+                        ? $"[Mesh] '{filter.name}' has NO mesh."
+                        : $"[Mesh] '{filter.name}', " +
+                          $"vertices={mesh.vertexCount}, " +
+                          $"submeshes={mesh.subMeshCount}");
             }
+        }
+
+        private void OnDisable()
+        {
+            if (sceneEventSubscribed)
+            {
+                SceneManager.sceneLoaded -= OnSceneLoaded;
+                sceneEventSubscribed = false;
+            }
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Runtime] OnDisable called.");
+        }
+
+        private void OnDestroy()
+        {
+            if (sceneEventSubscribed)
+            {
+                SceneManager.sceneLoaded -= OnSceneLoaded;
+                sceneEventSubscribed = false;
+            }
+
+            DestroyCurrentModel();
         }
 
         private void DestroyCurrentModel()
@@ -446,23 +455,15 @@ namespace ULTRADROID.Models.Test
 
             try
             {
-                ModelsTestPlugin.Log.LogInfo(
-                    "[Model] Destroying previous model instance.");
-
                 instance.Destroy();
             }
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogWarning(
-                    $"[Model] Error destroying previous instance: {ex}");
+                    $"[Model] Destroy failed: {ex}");
             }
 
             instance = null;
-        }
-
-        private void OnDestroy()
-        {
-            DestroyCurrentModel();
         }
     }
 }
