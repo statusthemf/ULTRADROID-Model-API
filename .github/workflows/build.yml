@@ -9,7 +9,7 @@ on:
       - ".github/workflows/build.yml"
   pull_request:
     paths:
-      - "source/**"
+      - "src/**"
       - "lib/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
