@@ -606,6 +606,74 @@ namespace ULTRADROID.Models
 
         private static void ApplyNodeTransform(Transform transform, JsonElement node)
         {
+            // glTF specifies either a matrix OR translation/rotation/scale.
+            if (node.TryGetProperty("matrix", out JsonElement matrix))
+            {
+                if (matrix.ValueKind != JsonValueKind.Array ||
+                    matrix.GetArrayLength() != 16)
+                {
+                    throw new InvalidDataException(
+                        "Node matrix must contain exactly 16 values.");
+                }
+
+                float[] m = new float[16];
+                for (int i = 0; i < 16; i++)
+                    m[i] = matrix[i].GetSingle();
+
+                // glTF matrices are column-major.
+                // Extract translation from the fourth column.
+                Vector3 position = new Vector3(m[12], m[13], m[14]);
+
+                // Extract scale from the lengths of the basis vectors.
+                Vector3 columnX = new Vector3(m[0], m[1], m[2]);
+                Vector3 columnY = new Vector3(m[4], m[5], m[6]);
+                Vector3 columnZ = new Vector3(m[8], m[9], m[10]);
+
+                Vector3 scale = new Vector3(
+                    columnX.magnitude,
+                    columnY.magnitude,
+                    columnZ.magnitude);
+
+                if (scale.x < 0.000001f ||
+                    scale.y < 0.000001f ||
+                    scale.z < 0.000001f)
+                {
+                    throw new NotSupportedException(
+                        "Node matrix contains a zero-scale axis.");
+                }
+
+                // Normalize the basis vectors before creating the rotation.
+                columnX /= scale.x;
+                columnY /= scale.y;
+                columnZ /= scale.z;
+
+                // Preserve a reflection by assigning its sign to the X scale.
+                if (Vector3.Dot(Vector3.Cross(columnX, columnY), columnZ) < 0f)
+                {
+                    scale.x = -scale.x;
+                    columnX = -columnX;
+                }
+
+                Matrix4x4 rotationMatrix = Matrix4x4.identity;
+
+                rotationMatrix.m00 = columnX.x;
+                rotationMatrix.m10 = columnX.y;
+                rotationMatrix.m20 = columnX.z;
+
+                rotationMatrix.m01 = columnY.x;
+                rotationMatrix.m11 = columnY.y;
+                rotationMatrix.m21 = columnY.z;
+
+                rotationMatrix.m02 = columnZ.x;
+                rotationMatrix.m12 = columnZ.y;
+                rotationMatrix.m22 = columnZ.z;
+
+                transform.localPosition = position;
+                transform.localRotation = rotationMatrix.rotation;
+                transform.localScale = scale;
+                return;
+            }
+
             if (node.TryGetProperty("translation", out JsonElement translation))
             {
                 transform.localPosition = new Vector3(
@@ -623,17 +691,13 @@ namespace ULTRADROID.Models
                     rotation[3].GetSingle());
             }
 
-            if (node.TryGetProperty("scale", out JsonElement scale))
+            if (node.TryGetProperty("scale", out JsonElement scaleElement))
             {
                 transform.localScale = new Vector3(
-                    scale[0].GetSingle(),
-                    scale[1].GetSingle(),
-                    scale[2].GetSingle());
+                    scaleElement[0].GetSingle(),
+                    scaleElement[1].GetSingle(),
+                    scaleElement[2].GetSingle());
             }
-
-            if (node.TryGetProperty("matrix", out _))
-                throw new NotSupportedException(
-                    "Matrix-based node transforms are not supported yet.");
         }
 
         private static JsonElement RequiredArray(JsonElement element, string name)
