@@ -10,7 +10,7 @@ namespace ULTRADROID.Models
         "0.2.0")]
     public sealed class ModelsPlugin : BasePlugin
     {
-        internal static ManualLogSource PluginLogger;
+        internal new static ManualLogSource PluginLogger;
 
         public override void Load()
         {
