@@ -1,0 +1,57 @@
+
+name: Build ULTRADROID Models API
+
+on:
+  push:
+    paths:
+      - "APIs/Models/**"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "APIs/Models/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: APIs/Models
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "6.0.x"
+
+      - name: Check required game references
+        run: |
+          for file in \
+            lib/BepInEx.Core.dll \
+            lib/BepInEx.Unity.IL2CPP.dll \
+            lib/Il2CppInterop.Runtime.dll \
+            lib/UnityEngine.CoreModule.dll \
+            lib/UnityEngine.PhysicsModule.dll
+          do
+            if [ ! -f "$file" ]; then
+              echo "::error::Missing reference: $file"
+              exit 1
+            fi
+          done
+
+      - name: Restore
+        run: dotnet restore ULTRADROID.Models.csproj
+
+      - name: Build
+        run: dotnet build ULTRADROID.Models.csproj --configuration Release --no-restore
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: ULTRADROID.Models
+          path: APIs/Models/bin/Release/net6.0/ULTRADROID.Models.dll
