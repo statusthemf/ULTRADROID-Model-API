@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'NewtonsoftProbe.cs'
-      - 'NewtonsoftProbe.csproj'
+      - 'test/NewtonsoftTest/**'
+      - 'lib/**'
       - '.github/workflows/newtonsoft-probe.yml'
 
 jobs:
@@ -14,19 +14,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '6.0.x'
 
-      - name: Build plugin
-        run: dotnet build NewtonsoftProbe.csproj --configuration Release
+      - name: Build
+        run: dotnet build test/NewtonsoftTest/NewtonsoftTest.csproj --configuration Release
 
-      - name: Upload plugin DLL
+      - name: Upload plugin
         uses: actions/upload-artifact@v4
         with:
           name: NewtonsoftProbe
-          path: bin/Release/net6.0/NewtonsoftProbe.dll
+          path: test/NewtonsoftTest/bin/Release/net6.0/NewtonsoftProbe.dll
