@@ -7,7 +7,7 @@ using BepInEx.Unity.IL2CPP;
 [BepInPlugin(
     "somerandommaid.ultradroid.newtonsoftprobe",
     "ULTRADROID Newtonsoft Probe",
-    "0.9.0")]
+    "1.0.0")]
 public class NewtonsoftRuntimeProbe : BasePlugin
 {
     private Assembly jsonAssembly = null!;
@@ -25,7 +25,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
     public override void Load()
     {
         Log.LogInfo("========================================");
-        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.9.0");
+        Log.LogInfo(" ULTRADROID Newtonsoft Probe 1.0.0");
         Log.LogInfo("========================================");
 
         try
@@ -67,6 +67,10 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             Run("21 - Deserialize primitive Boolean", TestDeserializeBoolean);
             Run("22 - Deserialize to JObject", TestDeserializeObject);
             Run("23 - Token conversion API inspection", InspectConversions);
+            Run("24 - Deserialize custom model", TestCustomModel);
+            Run("25 - Deserialize nested model and list", TestNestedModelAndList);
+            Run("26 - Missing model properties", TestMissingModelProperties);
+            Run("27 - Explicit null model properties", TestNullModelProperties);
 
             Log.LogInfo("========================================");
             Log.LogInfo(
@@ -933,6 +937,148 @@ public class NewtonsoftRuntimeProbe : BasePlugin
         Check((long)version == 9L, "Deserialized version incorrect.");
 
         Log.LogInfo("JObject deserialization: " + Serialize(typedObject!));
+    }
+
+    public sealed class ProbeModel
+    {
+        public string? Name { get; set; }
+        public int Version { get; set; }
+        public bool Enabled { get; set; }
+    }
+
+    public sealed class ProbeNestedModel
+    {
+        public string? Name { get; set; }
+        public ProbeModel? Details { get; set; }
+        public System.Collections.Generic.List<ProbeItem>? Items { get; set; }
+    }
+
+    public sealed class ProbeItem
+    {
+        public string? Id { get; set; }
+        public int Value { get; set; }
+    }
+
+    private object? DeserializeGenericModel(Type modelType, string json)
+    {
+        var method = jsonConvertType.GetMethods(
+                BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(m =>
+            {
+                if (m.Name != "DeserializeObject" ||
+                    !m.IsGenericMethodDefinition)
+                    return false;
+
+                var p = m.GetParameters();
+
+                return p.Length == 1 &&
+                       p[0].ParameterType == typeof(string);
+            });
+
+        if (method == null)
+            Skip("DeserializeObject<T>(string) not found.");
+
+        try
+        {
+            return method!.MakeGenericMethod(modelType)
+                .Invoke(null, new object[] { json });
+        }
+        catch (Exception ex)
+        {
+            throw new Exception(
+                "Generic model deserialization failed: " +
+                Unwrap(ex), Unwrap(ex));
+        }
+    }
+
+    private void TestCustomModel()
+    {
+        const string json =
+            "{\"Name\":\"ULTRADROID\",\"Version\":10,\"Enabled\":true}";
+
+        var result = DeserializeGenericModel(typeof(ProbeModel), json);
+
+        Check(result is ProbeModel,
+            "Result was not a ProbeModel instance.");
+
+        var model = (ProbeModel)result!;
+
+        Check(model.Name == "ULTRADROID", "Name incorrect.");
+        Check(model.Version == 10, "Version incorrect.");
+        Check(model.Enabled, "Enabled incorrect.");
+
+        Log.LogInfo(
+            "Custom model: " + model.Name + ", " +
+            model.Version + ", " + model.Enabled);
+    }
+
+    private void TestNestedModelAndList()
+    {
+        const string json =
+            "{\"Name\":\"Root\",\"Details\":{\"Name\":\"Child\",\"Version\":2,\"Enabled\":true}," +
+            "\"Items\":[{\"Id\":\"A\",\"Value\":11},{\"Id\":\"B\",\"Value\":22}]}";
+
+        var result = DeserializeGenericModel(
+            typeof(ProbeNestedModel), json);
+
+        Check(result is ProbeNestedModel,
+            "Result was not a ProbeNestedModel instance.");
+
+        var model = (ProbeNestedModel)result!;
+
+        Check(model.Name == "Root", "Root name incorrect.");
+        Check(model.Details != null, "Nested Details is null.");
+        Check(model.Details!.Name == "Child", "Nested name incorrect.");
+        Check(model.Details.Version == 2, "Nested version incorrect.");
+        Check(model.Items != null, "Items list is null.");
+        Check(model.Items!.Count == 2, "Expected two list items.");
+        Check(model.Items[0].Id == "A", "First item ID incorrect.");
+        Check(model.Items[0].Value == 11, "First item value incorrect.");
+        Check(model.Items[1].Id == "B", "Second item ID incorrect.");
+        Check(model.Items[1].Value == 22, "Second item value incorrect.");
+
+        Log.LogInfo(
+            "Nested model passed; item count=" + model.Items.Count);
+    }
+
+    private void TestMissingModelProperties()
+    {
+        const string json = "{\"Name\":\"Partial\"}";
+
+        var result = DeserializeGenericModel(typeof(ProbeModel), json);
+
+        Check(result is ProbeModel,
+            "Result was not a ProbeModel instance.");
+
+        var model = (ProbeModel)result!;
+
+        Check(model.Name == "Partial", "Name incorrect.");
+        Check(model.Version == 0,
+            "Missing integer property did not retain default value.");
+        Check(!model.Enabled,
+            "Missing Boolean property did not retain default value.");
+
+        Log.LogInfo("Missing properties retained CLR defaults.");
+    }
+
+    private void TestNullModelProperties()
+    {
+        const string json =
+            "{\"Name\":null,\"Details\":null,\"Items\":null}";
+
+        var result = DeserializeGenericModel(
+            typeof(ProbeNestedModel), json);
+
+        Check(result is ProbeNestedModel,
+            "Result was not a ProbeNestedModel instance.");
+
+        var model = (ProbeNestedModel)result!;
+
+        Check(model.Name == null, "Name was not null.");
+        Check(model.Details == null, "Details was not null.");
+        Check(model.Items == null, "Items was not null.");
+
+        Log.LogInfo("Explicit null properties deserialized correctly.");
     }
 
     private void InspectConversions()
