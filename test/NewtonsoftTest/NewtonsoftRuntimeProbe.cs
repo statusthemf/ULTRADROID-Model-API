@@ -7,118 +7,111 @@ using BepInEx.Unity.IL2CPP;
 [BepInPlugin(
     "somerandommaid.ultradroid.newtonsoftprobe",
     "ULTRADROID Newtonsoft Probe",
-    "0.3.1")]
+    "0.4.0")]
 public class NewtonsoftRuntimeProbe : BasePlugin
 {
     public override void Load()
     {
-        Log.LogInfo("=== Newtonsoft Runtime Probe 0.3.1 ===");
+        Log.LogInfo("=== Newtonsoft Runtime Probe 0.4.0 ===");
 
         try
         {
-            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-
-            var assembly = assemblies.FirstOrDefault(a =>
-                a.GetName().Name == "Newtonsoft.Json")
+            var assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a =>
+                    a.GetName().Name == "Newtonsoft.Json")
                 ?? Assembly.Load("Newtonsoft.Json");
 
-            Log.LogInfo("Assembly: " + assembly.FullName);
+            var ioAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a =>
+                    a.GetType("Il2CppSystem.IO.StringReader") != null);
 
-            InspectTextReaders();
-            InspectJsonReader(assembly);
+            if (ioAssembly == null)
+                throw new Exception("Il2CppSystem.IO types not found.");
 
-            Log.LogInfo("=== Probe complete ===");
+            var stringReaderType =
+                ioAssembly.GetType("Il2CppSystem.IO.StringReader")!;
+            var jsonTextReaderType =
+                assembly.GetType("Newtonsoft.Json.JsonTextReader")!;
+            var jObjectType =
+                assembly.GetType("Newtonsoft.Json.Linq.JObject")!;
+            var jsonConvertType =
+                assembly.GetType("Newtonsoft.Json.JsonConvert")!;
+
+            const string json =
+                "{\"probe\":\"ULTRADROID\",\"number\":123}";
+
+            Log.LogInfo("Creating StringReader...");
+            var stringReader = Activator.CreateInstance(
+                stringReaderType, new object[] { json })
+                ?? throw new Exception("StringReader construction returned null.");
+
+            Log.LogInfo("Creating JsonTextReader...");
+            var jsonReader = Activator.CreateInstance(
+                jsonTextReaderType, new[] { stringReader })
+                ?? throw new Exception("JsonTextReader construction returned null.");
+
+            Log.LogInfo("Calling JObject.Load...");
+            var loadMethod = jObjectType.GetMethods(
+                    BindingFlags.Public | BindingFlags.Static)
+                .First(m =>
+                {
+                    if (m.Name != "Load") return false;
+                    var p = m.GetParameters();
+                    return p.Length == 2 &&
+                           p[0].ParameterType.IsInstanceOfType(jsonReader);
+                });
+
+            var loadParameters = loadMethod.GetParameters();
+            var settingsType = loadParameters[1].ParameterType;
+            var settings = Activator.CreateInstance(settingsType);
+
+            var parsed = loadMethod.Invoke(
+                null, new[] { jsonReader, settings })
+                ?? throw new Exception("JObject.Load returned null.");
+
+            Log.LogInfo("PARSE SUCCESS");
+            Log.LogInfo("Parsed JSON: " + parsed);
+
+            var indexer = jObjectType.GetProperty(
+                "Item", new[] { typeof(string) })
+                ?? throw new Exception("JObject string indexer not found.");
+
+            var probeToken = indexer.GetValue(
+                parsed, new object[] { "probe" });
+
+            var numberToken = indexer.GetValue(
+                parsed, new object[] { "number" });
+
+            Log.LogInfo("probe token: " +
+                (probeToken?.ToString() ?? "<null>"));
+            Log.LogInfo("number token: " +
+                (numberToken?.ToString() ?? "<null>"));
+
+            Log.LogInfo("Calling JsonConvert.SerializeObject...");
+            var serializeMethod = jsonConvertType.GetMethods(
+                    BindingFlags.Public | BindingFlags.Static)
+                .First(m =>
+                {
+                    if (m.Name != "SerializeObject") return false;
+                    var p = m.GetParameters();
+                    return p.Length == 1 &&
+                           p[0].ParameterType.IsInstanceOfType(parsed);
+                });
+
+            var serialized = serializeMethod.Invoke(
+                null, new[] { parsed })?.ToString();
+
+            if (serialized == null)
+                throw new Exception("SerializeObject returned null.");
+
+            Log.LogInfo("SERIALIZE SUCCESS: " + serialized);
+
+            Log.LogInfo("=== JSON parse/serialize test passed ===");
         }
         catch (Exception ex)
         {
-            Log.LogError("Probe failed: " + ex);
-        }
-    }
-
-    private void InspectTextReaders()
-    {
-        var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-
-        foreach (var assembly in assemblies)
-        {
-            foreach (var typeName in new[]
-            {
-                "Il2CppSystem.IO.StringReader",
-                "Il2CppSystem.IO.TextReader",
-                "Il2CppSystem.IO.StreamReader",
-                "Il2CppSystem.IO.MemoryStream",
-                "Il2CppSystem.IO.Stream"
-            })
-            {
-                var type = assembly.GetType(typeName);
-                if (type == null)
-                    continue;
-
-                Log.LogInfo("--- " + type.FullName + " ---");
-
-                foreach (var ctor in type.GetConstructors(
-                    BindingFlags.Public | BindingFlags.Instance))
-                {
-                    Log.LogInfo("Constructor: " + ctor);
-                }
-
-                foreach (var method in type.GetMethods(
-                    BindingFlags.Public |
-                    BindingFlags.Static |
-                    BindingFlags.Instance |
-                    BindingFlags.DeclaredOnly))
-                {
-                    if (method.Name == "Read" ||
-                        method.Name == "ReadToEnd" ||
-                        method.Name == "Close" ||
-                        method.Name == "Dispose")
-                    {
-                        Log.LogInfo("Method: " + method);
-                    }
-                }
-            }
-        }
-    }
-
-    private void InspectJsonReader(Assembly assembly)
-    {
-        foreach (var typeName in new[]
-        {
-            "Newtonsoft.Json.JsonTextReader",
-            "Newtonsoft.Json.JsonReader",
-            "Newtonsoft.Json.Linq.JObject"
-        })
-        {
-            var type = assembly.GetType(typeName);
-
-            if (type == null)
-            {
-                Log.LogWarning("Type not found: " + typeName);
-                continue;
-            }
-
-            Log.LogInfo("--- " + type.FullName + " ---");
-
-            foreach (var ctor in type.GetConstructors(
-                BindingFlags.Public | BindingFlags.Instance))
-            {
-                Log.LogInfo("Constructor: " + ctor);
-            }
-
-            foreach (var method in type.GetMethods(
-                BindingFlags.Public |
-                BindingFlags.Static |
-                BindingFlags.Instance |
-                BindingFlags.DeclaredOnly))
-            {
-                if (method.Name == "Load" ||
-                    method.Name == "Read" ||
-                    method.Name == "ReadFrom" ||
-                    method.Name == "Close")
-                {
-                    Log.LogInfo("Method: " + method);
-                }
-            }
+            Log.LogError("JSON test failed: " +
+                (ex.InnerException ?? ex));
         }
     }
 }
