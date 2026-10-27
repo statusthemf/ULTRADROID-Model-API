@@ -9,6 +9,10 @@ using UnityEngine.Rendering;
 
 namespace ULTRADROID.Models
 {
+    [BepInPlugin(
+        "somerandommaid.ultradroid.models",
+        "ULTRADROID Models API",
+        "0.2.0")]
     public sealed class ModelLoadOptions
     {
         public string Name { get; set; } = "CustomModel";
