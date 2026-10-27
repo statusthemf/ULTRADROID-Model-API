@@ -1,26 +1,32 @@
 
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>NewtonsoftProbe</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="Newtonsoft.Json">
-      <HintPath>../../lib/Newtonsoft.Json.dll</HintPath>
-      <Private>true</Private>
+    <Reference Include="BepInEx.Core">
+      <HintPath>../../lib/BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
     </Reference>
-
-    <Reference Include="Il2Cppmscorlib">
-      <HintPath>../../lib/Il2Cppmscorlib.dll</HintPath>
-      <Private>true</Private>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>../../lib/BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
     </Reference>
-
     <Reference Include="Il2CppInterop.Runtime">
       <HintPath>../../lib/Il2CppInterop.Runtime.dll</HintPath>
-      <Private>true</Private>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>../../lib/Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>../../lib/Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 </Project>
