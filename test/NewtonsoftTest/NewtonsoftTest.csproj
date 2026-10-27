@@ -12,5 +12,9 @@
       <HintPath>../../lib/Newtonsoft.Json.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>../../lib/Il2Cppmscorlib.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>
