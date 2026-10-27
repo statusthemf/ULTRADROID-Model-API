@@ -135,12 +135,24 @@ namespace ULTRADROID.Models
                             ? "CustomModel"
                             : options.Name);
 
-                    rootObject.transform.position = options.Position;
-                    rootObject.transform.rotation = Quaternion.Euler(options.RotationEuler);
-                    rootObject.transform.localScale = options.Scale;
-
+                    // Parent first, then apply the requested transform.
+                    // When Parent is supplied, Position and RotationEuler are local.
                     if (options.Parent != null)
-                        rootObject.transform.SetParent(options.Parent, true);
+                    {
+                        rootObject.transform.SetParent(options.Parent, false);
+
+                        rootObject.transform.localPosition = options.Position;
+                        rootObject.transform.localRotation =
+                            Quaternion.Euler(options.RotationEuler);
+                        rootObject.transform.localScale = options.Scale;
+                    }
+                    else
+                    {
+                        rootObject.transform.position = options.Position;
+                        rootObject.transform.rotation =
+                            Quaternion.Euler(options.RotationEuler);
+                        rootObject.transform.localScale = options.Scale;
+                    }
 
                     GameObject[] nodeObjects = new GameObject[
                         nodes.ValueKind == JsonValueKind.Array ? nodes.GetArrayLength() : 0];
