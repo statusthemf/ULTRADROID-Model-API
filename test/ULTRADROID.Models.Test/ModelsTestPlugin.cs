@@ -417,27 +417,15 @@ namespace ULTRADROID.Models.Test
                           $"submeshes={mesh.subMeshCount}");
             }
         }
-
+        
         private void OnDisable()
         {
-            if (sceneEventSubscribed)
-            {
-                SceneManager.sceneLoaded -= OnSceneLoaded;
-                sceneEventSubscribed = false;
-            }
-
             ModelsTestPlugin.Log.LogInfo(
                 "[Runtime] OnDisable called.");
         }
 
         private void OnDestroy()
         {
-            if (sceneEventSubscribed)
-            {
-                SceneManager.sceneLoaded -= OnSceneLoaded;
-                sceneEventSubscribed = false;
-            }
-
             DestroyCurrentModel();
         }
 
