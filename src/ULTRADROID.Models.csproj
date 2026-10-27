@@ -16,6 +16,11 @@
       <HintPath>../lib/BepInEx.Core.dll</HintPath>
     </Reference>
 
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>../lib/Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
     <Reference Include="BepInEx.Unity.IL2CPP">
       <HintPath>../lib/BepInEx.Unity.IL2CPP.dll</HintPath>
     </Reference>
