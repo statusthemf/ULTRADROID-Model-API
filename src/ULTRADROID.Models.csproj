@@ -13,19 +13,23 @@
 
   <ItemGroup>
     <Reference Include="BepInEx.Core">
-      <HintPath>lib/BepInEx.Core.dll</HintPath>
+      <HintPath>../lib/BepInEx.Core.dll</HintPath>
     </Reference>
+
     <Reference Include="BepInEx.Unity.IL2CPP">
-      <HintPath>lib/BepInEx.Unity.IL2CPP.dll</HintPath>
+      <HintPath>../lib/BepInEx.Unity.IL2CPP.dll</HintPath>
     </Reference>
+
     <Reference Include="Il2CppInterop.Runtime">
-      <HintPath>lib/Il2CppInterop.Runtime.dll</HintPath>
+      <HintPath>../lib/Il2CppInterop.Runtime.dll</HintPath>
     </Reference>
+
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>lib/UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>../lib/UnityEngine.CoreModule.dll</HintPath>
     </Reference>
+
     <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>lib/UnityEngine.PhysicsModule.dll</HintPath>
+      <HintPath>../lib/UnityEngine.PhysicsModule.dll</HintPath>
     </Reference>
   </ItemGroup>
 
