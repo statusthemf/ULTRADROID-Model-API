@@ -7,7 +7,7 @@ using BepInEx.Unity.IL2CPP;
 [BepInPlugin(
     "somerandommaid.ultradroid.newtonsoftprobe",
     "ULTRADROID Newtonsoft Probe",
-    "0.7.0")]
+    "0.8.0")]
 public class NewtonsoftRuntimeProbe : BasePlugin
 {
     private Assembly jsonAssembly = null!;
@@ -25,7 +25,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
     public override void Load()
     {
         Log.LogInfo("========================================");
-        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.7.0");
+        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.8.0");
         Log.LogInfo("========================================");
 
         try
@@ -49,23 +49,24 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             Run("03 - Read integer property", TestIntegerProperty);
             Run("04 - Read Boolean property", TestBooleanProperty);
             Run("05 - Read missing property", TestMissingProperty);
-            Run("06 - Parse nested object", TestNestedObject);
-            Run("07 - Parse JSON array", TestParsedArray);
-            Run("08 - Construct JValue tokens", TestJValues);
-            Run("09 - Construct and populate JObject", TestBuildObject);
-            Run("10 - Construct and populate JArray", TestBuildArray);
-            Run("11 - Serialize parsed JObject", TestSerializeObject);
-            Run("12 - Serialize constructed JSON", TestSerializeConstructed);
-            Run("13 - Parse-serialize-parse round trip", TestRoundTrip);
-            Run("14 - Parse empty object", TestEmptyObject);
-            Run("15 - Parse null property", TestNullProperty);
-            Run("16 - Parse Unicode string", TestUnicode);
-            Run("17 - Reject malformed JSON", TestMalformedJson);
-            Run("18 - Deserialize primitive string", TestDeserializeString);
-            Run("19 - Deserialize primitive integer", TestDeserializeInteger);
-            Run("20 - Deserialize primitive Boolean", TestDeserializeBoolean);
-            Run("21 - Deserialize to JObject", TestDeserializeObject);
-            Run("22 - Token conversion API inspection", InspectConversions);
+            Run("06 - IL2CPP proxy casting", TestProxyCasting);
+            Run("07 - Parse nested object", TestNestedObject);
+            Run("08 - Parse JSON array", TestParsedArray);
+            Run("09 - Construct JValue tokens", TestJValues);
+            Run("10 - Construct and populate JObject", TestBuildObject);
+            Run("11 - Construct and populate JArray", TestBuildArray);
+            Run("12 - Serialize parsed JObject", TestSerializeObject);
+            Run("13 - Serialize constructed JSON", TestSerializeConstructed);
+            Run("14 - Parse-serialize-parse round trip", TestRoundTrip);
+            Run("15 - Parse empty object", TestEmptyObject);
+            Run("16 - Parse null property", TestNullProperty);
+            Run("17 - Parse Unicode string", TestUnicode);
+            Run("18 - Reject malformed JSON", TestMalformedJson);
+            Run("19 - Deserialize primitive string", TestDeserializeString);
+            Run("20 - Deserialize primitive integer", TestDeserializeInteger);
+            Run("21 - Deserialize primitive Boolean", TestDeserializeBoolean);
+            Run("22 - Deserialize to JObject", TestDeserializeObject);
+            Run("23 - Token conversion API inspection", InspectConversions);
 
             Log.LogInfo("========================================");
             Log.LogInfo(
@@ -230,27 +231,75 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             ?? throw new Exception("JToken.ReadFrom returned null.");
     }
 
-    // Resolve the indexer on the actual object's type.
-    // If the proxy's runtime type hides the indexer, walk its base types.
-    private MethodInfo FindIndexerGetter(object obj, Type parameterType)
+    private object? TryCastProxy(object? proxy, Type targetType)
+    {
+        if (proxy == null)
+            return null;
+
+        if (targetType.IsInstanceOfType(proxy))
+            return proxy;
+
+        for (Type? current = proxy.GetType();
+             current != null;
+             current = current.BaseType)
+        {
+            foreach (var method in current.GetMethods(
+                BindingFlags.Public |
+                BindingFlags.NonPublic |
+                BindingFlags.Instance |
+                BindingFlags.FlattenHierarchy))
+            {
+                if (method.Name != "Cast" &&
+                    method.Name != "TryCast")
+                    continue;
+
+                if (!method.IsGenericMethodDefinition ||
+                    method.GetGenericArguments().Length != 1 ||
+                    method.GetParameters().Length != 0)
+                    continue;
+
+                try
+                {
+                    var cast = method.MakeGenericMethod(targetType);
+                    var result = cast.Invoke(proxy, null);
+
+                    if (result != null &&
+                        targetType.IsInstanceOfType(result))
+                        return result;
+                }
+                catch (Exception ex)
+                {
+                    Log.LogDebug(
+                        method.Name + "<" + targetType.Name + ">: " +
+                        Unwrap(ex).Message);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private MethodInfo FindIndexerGetter(
+        object obj,
+        Type parameterType)
     {
         Type? current = obj.GetType();
 
         while (current != null)
         {
             var getter = current.GetMethods(
-                    BindingFlags.Public |
-                    BindingFlags.Instance |
-                    BindingFlags.DeclaredOnly)
+                BindingFlags.Public |
+                BindingFlags.Instance |
+                BindingFlags.DeclaredOnly)
                 .FirstOrDefault(m =>
                 {
                     if (m.Name != "get_Item")
                         return false;
 
-                    var p = m.GetParameters();
+                    var parameters = m.GetParameters();
 
-                    return p.Length == 1 &&
-                           p[0].ParameterType == parameterType;
+                    return parameters.Length == 1 &&
+                           parameters[0].ParameterType == parameterType;
                 });
 
             if (getter != null)
@@ -266,14 +315,24 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
     private object? GetProperty(object obj, string name)
     {
-        var getter = FindIndexerGetter(obj, typeof(string));
-        return getter.Invoke(obj, new object[] { name });
+        var typedObject = TryCastProxy(obj, jObjectType);
+
+        if (typedObject == null)
+            throw new Exception("Could not cast token proxy to JObject.");
+
+        return FindIndexerGetter(typedObject, typeof(string))
+            .Invoke(typedObject, new object[] { name });
     }
 
     private object? GetArrayItem(object obj, int index)
     {
-        var getter = FindIndexerGetter(obj, typeof(int));
-        return getter.Invoke(obj, new object[] { index });
+        var typedArray = TryCastProxy(obj, jArrayType);
+
+        if (typedArray == null)
+            throw new Exception("Could not cast token proxy to JArray.");
+
+        return FindIndexerGetter(typedArray, typeof(int))
+            .Invoke(typedArray, new object[] { index });
     }
 
     private object? GetTokenValue(object token)
@@ -532,6 +591,35 @@ public class NewtonsoftRuntimeProbe : BasePlugin
             "Missing property unexpectedly returned a token.");
 
         Log.LogInfo("Missing property returned null.");
+    }
+
+    private void TestProxyCasting()
+    {
+        var objectToken = ParseToken("{\"value\":42}");
+        var arrayToken = ParseToken("[\"alpha\",7]");
+
+        var typedObject = TryCastProxy(objectToken, jObjectType);
+        var typedArray = TryCastProxy(arrayToken, jArrayType);
+
+        Check(typedObject != null, "JObject proxy cast failed.");
+        Check(typedArray != null, "JArray proxy cast failed.");
+
+        Log.LogInfo("JObject cast: " + typedObject!.GetType().FullName);
+        Log.LogInfo("JArray cast: " + typedArray!.GetType().FullName);
+
+        var objectValue = GetProperty(typedObject, "value");
+        var arrayValue = GetArrayItem(typedArray, 0);
+
+        Check(objectValue != null, "JObject indexer returned null.");
+        Check(arrayValue != null, "JArray indexer returned null.");
+
+        Check(
+            (long)ConvertToken(objectValue!, typeof(long)) == 42L,
+            "JObject indexer value incorrect.");
+
+        Check(
+            (string)ConvertToken(arrayValue!, typeof(string)) == "alpha",
+            "JArray indexer value incorrect.");
     }
 
     private void TestNestedObject()
