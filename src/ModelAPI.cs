@@ -610,7 +610,7 @@ namespace ULTRADROID.Models
                         2, 2, TextureFormat.RGBA32, true);
                     texture.name = GetString(imageData, "name", "GLTF_Image");
 
-                    if (!ImageConversion.LoadImage(texture, bytes, false))
+                    if (!texture.LoadImage(texture, bytes, false))
                     {
                         UnityEngine.Object.Destroy(texture);
                         throw new InvalidDataException(
