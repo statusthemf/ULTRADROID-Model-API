@@ -7,7 +7,7 @@ using BepInEx.Unity.IL2CPP;
 [BepInPlugin(
     "somerandommaid.ultradroid.newtonsoftprobe",
     "ULTRADROID Newtonsoft Probe",
-    "0.8.0")]
+    "0.9.0")]
 public class NewtonsoftRuntimeProbe : BasePlugin
 {
     private Assembly jsonAssembly = null!;
@@ -25,7 +25,7 @@ public class NewtonsoftRuntimeProbe : BasePlugin
     public override void Load()
     {
         Log.LogInfo("========================================");
-        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.8.0");
+        Log.LogInfo(" ULTRADROID Newtonsoft Probe 0.9.0");
         Log.LogInfo("========================================");
 
         try
@@ -337,49 +337,21 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
     private object? GetTokenValue(object token)
     {
-        // Try the runtime wrapper type first.
-        var getter = token.GetType().GetMethods(
+        var typedValue = TryCastProxy(token, jValueType);
+
+        if (typedValue == null)
+            return null;
+
+        var getter = jValueType.GetMethods(
                 BindingFlags.Public | BindingFlags.Instance)
             .FirstOrDefault(m =>
                 m.Name == "get_Value" &&
                 m.GetParameters().Length == 0);
 
-        if (getter != null)
-        {
-            try
-            {
-                return getter.Invoke(token, null);
-            }
-            catch (Exception ex)
-            {
-                Log.LogWarning(
-                    "Runtime get_Value failed: " +
-                    Unwrap(ex).Message);
-            }
-        }
+        if (getter == null)
+            throw new Exception("JValue.get_Value() not found.");
 
-        // Then try JValue's declared getter.
-        getter = jValueType.GetMethods(
-                BindingFlags.Public | BindingFlags.Instance)
-            .FirstOrDefault(m =>
-                m.Name == "get_Value" &&
-                m.GetParameters().Length == 0);
-
-        if (getter != null)
-        {
-            try
-            {
-                return getter.Invoke(token, null);
-            }
-            catch (Exception ex)
-            {
-                Log.LogWarning(
-                    "JValue get_Value failed: " +
-                    Unwrap(ex).Message);
-            }
-        }
-
-        return null;
+        return getter.Invoke(typedValue, null);
     }
 
     private object ConvertToken(object token, Type targetType)
@@ -892,19 +864,75 @@ public class NewtonsoftRuntimeProbe : BasePlugin
 
     private void TestDeserializeObject()
     {
-        var candidates = jsonConvertType.GetMethods(
+        const string json = "{\"name\":\"ULTRADROID\",\"version\":9}";
+
+        var il2CppType = FindType("Il2CppSystem.Type")
+            ?? throw new Exception("Il2CppSystem.Type not found.");
+
+        var fromSystemType = il2CppType.GetMethods(
                 BindingFlags.Public | BindingFlags.Static)
-            .Where(m =>
-                m.Name == "DeserializeObject" &&
-                !m.IsGenericMethodDefinition)
-            .ToArray();
+            .FirstOrDefault(m =>
+                m.Name == "GetType" &&
+                m.GetParameters().Length == 1 &&
+                m.GetParameters()[0].ParameterType == typeof(string));
 
-        foreach (var method in candidates)
-            Log.LogInfo("Deserialize overload: " + method);
+        if (fromSystemType == null)
+        {
+            Skip("Il2CppSystem.Type.GetType(string) not found.");
+            return;
+        }
 
-        Skip(
-            "Still need to establish how to create the matching " +
-            "Il2CppSystem.Type for JObject.");
+        var targetType = fromSystemType.Invoke(
+            null, new object[] { "Newtonsoft.Json.Linq.JObject" });
+
+        if (targetType == null)
+        {
+            Skip("Could not resolve JObject as Il2CppSystem.Type.");
+            return;
+        }
+
+        var deserialize = jsonConvertType.GetMethods(
+                BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(m =>
+            {
+                if (m.Name != "DeserializeObject" ||
+                    m.IsGenericMethodDefinition)
+                    return false;
+
+                var p = m.GetParameters();
+
+                return p.Length == 3 &&
+                       p[0].ParameterType == typeof(string) &&
+                       p[1].ParameterType == il2CppType;
+            });
+
+        if (deserialize == null)
+        {
+            Skip("DeserializeObject(string, Il2CppSystem.Type, settings) missing.");
+            return;
+        }
+
+        var result = deserialize.Invoke(
+            null, new object?[] { json, targetType, null });
+
+        Check(result != null, "JObject deserialization returned null.");
+
+        var typedObject = TryCastProxy(result, jObjectType);
+
+        Check(typedObject != null, "Result could not be cast to JObject.");
+
+        var name = ConvertToken(
+            GetProperty(typedObject!, "name")!,
+            typeof(string));
+
+        var version = ConvertToken(
+            GetProperty(typedObject!, "version")!,
+            typeof(long));
+
+        Check((string)name == "ULTRADROID", "Deserialized name incorrect.");
+        Check((long)version == 9L, "Deserialized version incorrect.");
+
+        Log.LogInfo("JObject deserialization: " + Serialize(typedObject!));
     }
 
     private void InspectConversions()
