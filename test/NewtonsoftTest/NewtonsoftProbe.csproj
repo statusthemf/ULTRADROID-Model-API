@@ -7,9 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="NewtonsoftRuntimeProbe.cs" />
+
     <Reference Include="BepInEx.Core">
       <HintPath>../../lib/BepInEx.Core.dll</HintPath>
       <Private>false</Private>
