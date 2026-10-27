@@ -16,5 +16,9 @@
       <HintPath>../../lib/Il2Cppmscorlib.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <Reference>
+      <HintPath>../../lib/Il2CppInterop.Runtime.dll</HintPath>
+      <Private>true</Private>
+    </Reference
   </ItemGroup>
 </Project>
