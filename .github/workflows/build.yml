@@ -1,15 +1,17 @@
 
-name: Build ULTRADROID Models API
+name: Build ULTRADROID Models API and Test
 
 on:
   push:
     paths:
       - "src/**"
+      - "test/**"
       - "lib/**"
       - ".github/workflows/build.yml"
   pull_request:
     paths:
       - "src/**"
+      - "test/**"
       - "lib/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -36,6 +38,7 @@ jobs:
             lib/BepInEx.Core.dll \
             lib/BepInEx.Unity.IL2CPP.dll \
             lib/Il2CppInterop.Runtime.dll \
+            lib/Il2Cppmscorlib.dll \
             lib/UnityEngine.CoreModule.dll \
             lib/UnityEngine.PhysicsModule.dll
           do
@@ -45,15 +48,47 @@ jobs:
             fi
           done
 
-      - name: Restore
+      - name: Restore Models API
         run: dotnet restore src/ULTRADROID.Models.csproj
 
-      - name: Build
+      - name: Build Models API
         run: dotnet build src/ULTRADROID.Models.csproj --configuration Release --no-restore
 
-      - name: Upload DLL
+      - name: Restore test plugin
+        run: dotnet restore test/ULTRADROID.Models.Test/ULTRADROID.Models.Test.csproj
+
+      - name: Build test plugin
+        run: dotnet build test/ULTRADROID.Models.Test/ULTRADROID.Models.Test.csproj --configuration Release
+
+      - name: Package API and test separately
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p dist/api dist/test
+
+          cp src/bin/Release/net10.0/ULTRADROID.Models.dll \
+            dist/api/ULTRADROID.Models.dll
+
+          cp test/ULTRADROID.Models.Test/bin/Release/net10.0/ULTRADROID.Models.Test.dll \
+            dist/test/ULTRADROID.Models.Test.dll
+
+          cd dist/api
+          zip -j ../ULTRADROID.Models.zip ULTRADROID.Models.dll
+
+          cd ../test
+          zip -j ../ULTRADROID.Models.Test.zip ULTRADROID.Models.Test.dll
+
+      - name: Upload Models API ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: ULTRADROID.Models
-          path: src/bin/Release/net10.0/ULTRADROID.Models.dll
+          name: ULTRADROID.Models-ZIP
+          path: dist/ULTRADROID.Models.zip
+          if-no-files-found: error
+
+      - name: Upload test plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ULTRADROID.Models.Test-ZIP
+          path: dist/ULTRADROID.Models.Test.zip
           if-no-files-found: error
