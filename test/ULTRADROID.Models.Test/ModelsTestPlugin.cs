@@ -4,6 +4,7 @@ using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.Injection;
 using ULTRADROID.Models;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -13,7 +14,7 @@ namespace ULTRADROID.Models.Test
     [BepInPlugin(
         "somerandommaid.ultradroid.models.test",
         "ULTRADROID Models Test",
-        "0.3.0")]
+        "0.3.1")]
     [BepInDependency("somerandommaid.ultradroid.models")]
     public class ModelsTestPlugin : BasePlugin
     {
@@ -24,10 +25,10 @@ namespace ULTRADROID.Models.Test
 
         public override void Load()
         {
-            Log = Logger;
+            Log = base.Log;
 
             Log.LogInfo("========================================");
-            Log.LogInfo("ULTRADROID Models Test 0.3.0 starting.");
+            Log.LogInfo("ULTRADROID Models Test 0.3.1 starting.");
             Log.LogInfo($"Models API version: {ModelAPI.Version}");
             Log.LogInfo($"Model path: {ModelPath}");
             Log.LogInfo($"Model file exists: {File.Exists(ModelPath)}");
@@ -53,8 +54,7 @@ namespace ULTRADROID.Models.Test
             }
             catch (Exception ex)
             {
-                Log.LogError(
-                    $"Failed to initialize diagnostic runtime: {ex}");
+                Log.LogError($"Failed to initialize runtime: {ex}");
             }
 
             Log.LogInfo("========================================");
@@ -88,7 +88,6 @@ namespace ULTRADROID.Models.Test
                 if (!gameplayDetected || modelLoadAttempted)
                     return;
 
-                // Allow the scene and camera to initialize.
                 if (Time.time - gameplayDetectedTime < 2f)
                     return;
 
@@ -97,7 +96,7 @@ namespace ULTRADROID.Models.Test
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogError(
-                    $"[Runtime] Unhandled diagnostic error: {ex}");
+                    $"[Runtime] Unhandled error: {ex}");
             }
         }
 
@@ -117,8 +116,7 @@ namespace ULTRADROID.Models.Test
                     $"[Scene] Active scene changed to: '{activeName}'");
             }
 
-            // Log every three seconds, even when no gameplay scene
-            // has been recognized.
+            // Report diagnostics every three seconds.
             if (Time.time >= nextDiagnosticTime)
             {
                 nextDiagnosticTime = Time.time + 3f;
@@ -130,8 +128,8 @@ namespace ULTRADROID.Models.Test
 
                 ModelsTestPlugin.Log.LogInfo(
                     $"[Diagnostic] Gameplay detected: {gameplayDetected}; " +
-                    $"recognized scene: '{detectedGameplayScene}'; " +
-                    $"model load attempted: {modelLoadAttempted}");
+                    $"scene: '{detectedGameplayScene}'; " +
+                    $"load attempted: {modelLoadAttempted}");
             }
 
             if (gameplayDetected)
@@ -145,7 +143,7 @@ namespace ULTRADROID.Models.Test
                 return;
             }
 
-            // Check every loaded scene, not only the active scene.
+            // Search all loaded scenes, not only the active scene.
             int sceneCount = SceneManager.sceneCount;
 
             for (int i = 0; i < sceneCount; i++)
@@ -199,7 +197,7 @@ namespace ULTRADROID.Models.Test
 
             string name = sceneName.Trim();
 
-            // Sandbox / level editor.
+            // Sandbox.
             if (string.Equals(
                 name,
                 "uk_construct",
@@ -208,7 +206,7 @@ namespace ULTRADROID.Models.Test
                 return true;
             }
 
-            // Common campaign scene naming.
+            // Campaign scenes.
             if (name.StartsWith(
                 "Level ",
                 StringComparison.OrdinalIgnoreCase))
@@ -216,7 +214,7 @@ namespace ULTRADROID.Models.Test
                 return true;
             }
 
-            // Raw identifiers such as 0-1, P-1, A-1.
+            // Raw identifiers: 0-1, P-1, A-1, E-1, etc.
             if (name.Length == 3 &&
                 name[1] == '-' &&
                 char.IsDigit(name[2]))
@@ -244,7 +242,7 @@ namespace ULTRADROID.Models.Test
             }
 
             ModelsTestPlugin.Log.LogInfo(
-                $"[Gameplay] Recognized gameplay scene: '{sceneName}'");
+                $"[Gameplay] Recognized scene: '{sceneName}'");
 
             detectedGameplayScene = sceneName;
             gameplayDetected = true;
@@ -252,11 +250,10 @@ namespace ULTRADROID.Models.Test
             modelLoadAttempted = false;
 
             DestroyCurrentModel();
-
             selectedCamera = null;
 
             ModelsTestPlugin.Log.LogInfo(
-                "[Gameplay] Waiting two seconds for the scene to initialize.");
+                "[Gameplay] Waiting two seconds for initialization.");
         }
 
         private Camera FindUsableCamera()
@@ -279,7 +276,6 @@ namespace ULTRADROID.Models.Test
             ModelsTestPlugin.Log.LogInfo(
                 $"[Camera] Found {cameras.Length} camera(s).");
 
-            // Prefer an enabled camera tagged MainCamera.
             foreach (Camera camera in cameras)
             {
                 if (camera == null || !camera.isActiveAndEnabled)
@@ -294,7 +290,6 @@ namespace ULTRADROID.Models.Test
                 }
             }
 
-            // Fall back to the first enabled camera.
             foreach (Camera camera in cameras)
             {
                 if (camera == null || !camera.isActiveAndEnabled)
@@ -323,7 +318,6 @@ namespace ULTRADROID.Models.Test
             {
                 ModelsTestPlugin.Log.LogError(
                     $"[Model] File does not exist: {ModelsTestPlugin.ModelPath}");
-
                 return;
             }
 
@@ -331,10 +325,9 @@ namespace ULTRADROID.Models.Test
 
             if (selectedCamera == null)
             {
-                ModelsTestPlugin.Log.LogError(
-                    "[Model] Cannot load test model: no usable camera was found.");
+                ModelsTestPlugin.Log.LogWarning(
+                    "[Model] No usable camera yet. Will retry.");
 
-                // Try again in case the camera appears later.
                 modelLoadAttempted = false;
                 gameplayDetectedTime = Time.time + 3f;
                 return;
@@ -343,15 +336,15 @@ namespace ULTRADROID.Models.Test
             try
             {
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Calling ModelAPI.LoadGLB with '{ModelsTestPlugin.ModelPath}'.");
+                    "[Model] Calling ModelAPI.LoadGLB...");
 
                 ModelLoadOptions options = new ModelLoadOptions
                 {
                     Name = "BladesOfChaosTest",
                     Parent = selectedCamera.transform,
-                    LocalPosition = new Vector3(0f, 0f, 2f),
-                    LocalRotation = Quaternion.identity,
-                    LocalScale = new Vector3(0.1f, 0.1f, 0.1f)
+                    Position = new Vector3(0f, 0f, 2f),
+                    RotationEuler = Vector3.zero,
+                    Scale = new Vector3(0.1f, 0.1f, 0.1f)
                 };
 
                 instance = ModelAPI.LoadGLB(
@@ -361,8 +354,7 @@ namespace ULTRADROID.Models.Test
                 if (instance == null)
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Model] LoadGLB returned a null ModelInstance.");
-
+                        "[Model] LoadGLB returned null.");
                     return;
                 }
 
@@ -370,7 +362,6 @@ namespace ULTRADROID.Models.Test
                 {
                     ModelsTestPlugin.Log.LogError(
                         "[Model] ModelInstance.Root is null.");
-
                     return;
                 }
 
@@ -378,7 +369,7 @@ namespace ULTRADROID.Models.Test
                     $"[Model] LOAD SUCCESS. Root: '{instance.Root.name}'");
 
                 ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Parent camera: '{selectedCamera.name}'");
+                    $"[Model] Camera: '{selectedCamera.name}'");
 
                 ModelsTestPlugin.Log.LogInfo(
                     $"[Model] Root position: {instance.Root.transform.position}");
@@ -432,12 +423,19 @@ namespace ULTRADROID.Models.Test
 
                 Mesh mesh = filter.sharedMesh;
 
-                ModelsTestPlugin.Log.LogInfo(
-                    mesh == null
-                        ? $"[Model] MeshFilter '{filter.name}' has no mesh."
-                        : $"[Model] MeshFilter '{filter.name}': " +
-                          $"mesh='{mesh.name}', vertices={mesh.vertexCount}, " +
-                          $"submeshes={mesh.subMeshCount}");
+                if (mesh == null)
+                {
+                    ModelsTestPlugin.Log.LogWarning(
+                        $"[Model] MeshFilter '{filter.name}' has no mesh.");
+                }
+                else
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        $"[Model] MeshFilter '{filter.name}': " +
+                        $"mesh='{mesh.name}', " +
+                        $"vertices={mesh.vertexCount}, " +
+                        $"submeshes={mesh.subMeshCount}");
+                }
             }
         }
 
