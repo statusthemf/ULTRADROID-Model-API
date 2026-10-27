@@ -46,10 +46,10 @@ jobs:
           done
 
       - name: Restore
-        run: dotnet restore source/ULTRADROID.Models.csproj
+        run: dotnet restore src/ULTRADROID.Models.csproj
 
       - name: Build
-        run: dotnet build source/ULTRADROID.Models.csproj --configuration Release --no-restore
+        run: dotnet build src/ULTRADROID.Models.csproj --configuration Release --no-restore
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
