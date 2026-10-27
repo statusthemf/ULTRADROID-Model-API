@@ -25,6 +25,10 @@
       <HintPath>../lib/BepInEx.Unity.IL2CPP.dll</HintPath>
     </Reference>
 
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>../lib/UnityEngine.ImageConversionModule.dll</HintPath>
+    </Reference>
+
     <Reference Include="Il2CppInterop.Runtime">
       <HintPath>../lib/Il2CppInterop.Runtime.dll</HintPath>
       <Private>false</Private>
