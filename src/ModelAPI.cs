@@ -528,24 +528,57 @@ namespace ULTRADROID.Models
 
         private static Material CreateDefaultMaterial()
         {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null)
+            bool hasScriptablePipeline =
+                GraphicsSettings.currentRenderPipeline != null;
+
+            Shader shader = null;
+
+            if (hasScriptablePipeline)
+            {
+                // Prefer shaders intended for Scriptable Render Pipelines.
+                shader = Shader.Find("Universal Render Pipeline/Lit");
+
+                if (shader == null || !shader.isSupported)
+                    shader = Shader.Find("HDRP/Lit");
+            }
+            else
+            {
+                // Unity Built-in Render Pipeline.
                 shader = Shader.Find("Standard");
-            if (shader == null)
+            }
+
+            // Use other lit shaders as fallbacks before considering unlit ones.
+            if (shader == null || !shader.isSupported)
+                shader = Shader.Find("Standard");
+
+            if (shader == null || !shader.isSupported)
+                shader = Shader.Find("Universal Render Pipeline/Lit");
+
+            if (shader == null || !shader.isSupported)
                 shader = Shader.Find("Unlit/Texture");
-            if (shader == null)
+
+            if (shader == null || !shader.isSupported)
                 shader = Shader.Find("Unlit/Color");
 
-            if (shader == null)
+            if (shader == null || !shader.isSupported)
+            {
                 throw new NotSupportedException(
-                    "No compatible Unity shader was found.");
+                    "No supported Unity shader was found for the imported model.");
+            }
 
             Material material = new Material(shader);
 
             if (material.HasProperty("_BaseColor"))
                 material.SetColor("_BaseColor", Color.white);
+
             if (material.HasProperty("_Color"))
                 material.SetColor("_Color", Color.white);
+
+            Debug.Log(
+                "[ULTRADROID Models API] Created material using shader: " +
+                shader.name +
+                " | Pipeline: " +
+                (hasScriptablePipeline ? "Scriptable" : "Built-in"));
 
             return material;
         }
