@@ -283,16 +283,17 @@ namespace ULTRADROID.Models.Test
                 }
 
                 animationPlayer = GlbAnimationPlayerFactory.Attach(instance);
-
+                
                 if (animationPlayer.Play("Bow"))
                 {
                     ModelsTestPlugin.Log.LogInfo(
-                        "[Animation] Successfully started 'Bow'.");
+                        "[Animation] Started '" + animationPlayer.CurrentClipName +
+                        "', duration=" + animationPlayer.Duration);
                 }
                 else
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Animation] Could not play 'Bow'. Check the clip list above.");
+                        "[Animation] Failed to start 'Bow'.");
                 }
 
 
