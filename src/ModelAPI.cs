@@ -1,4 +1,3 @@
-
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -165,6 +164,13 @@ namespace ULTRADROID.Models
             public Material Material;
         }
 
+        private sealed class SkinBuildData
+        {
+            public int[] Joints;
+            public int Skeleton = -1;
+            public Matrix4x4[] BindPoses;
+        }
+
         private sealed class PrimitiveBuildData
         {
             public Vector3[] Vertices;
@@ -172,6 +178,7 @@ namespace ULTRADROID.Models
             public Vector2[][] UVChannels;
             public Color[] Colors;
             public Vector4[] Tangents;
+            public BoneWeight[] BoneWeights;
             public int[] Triangles;
             public Material Material;
         }
@@ -272,6 +279,9 @@ namespace ULTRADROID.Models
                             nodeObjects[i].transform.SetParent(rootObject.transform, false);
                     }
 
+                    SkinBuildData[] skins = ReadSkins(
+                        gltf, binary, views, accessors, nodeObjects);
+
                     int meshCount = 0;
 
                     // Meshes may be referenced by nodes. Build each referenced primitive.
@@ -286,6 +296,33 @@ namespace ULTRADROID.Models
                         if (meshIndex < 0 || meshIndex >= meshes.GetArrayLength())
                             throw new InvalidDataException("Node mesh index is out of range.");
 
+                        Transform[] skinBones = null;
+                        Matrix4x4[] skinBindPoses = null;
+                        Transform skinRoot = null;
+
+                        if (node.TryGetProperty("skin", out JsonElement skinElement))
+                        {
+                            int skinIndex = skinElement.GetInt32();
+
+                            if (skinIndex < 0 || skinIndex >= skins.Length)
+                                throw new InvalidDataException(
+                                    "Node skin index is out of range.");
+
+                            SkinBuildData skin = skins[skinIndex];
+
+                            skinBones = new Transform[skin.Joints.Length];
+
+                            for (int j = 0; j < skin.Joints.Length; j++)
+                                skinBones[j] = nodeObjects[skin.Joints[j]].transform;
+
+                            skinBindPoses = skin.BindPoses;
+
+                            if (skin.Skeleton >= 0)
+                                skinRoot = nodeObjects[skin.Skeleton].transform;
+                            else if (skinBones.Length > 0)
+                                skinRoot = skinBones[0];
+                        }
+
                         BuildMesh(
                             meshes[meshIndex],
                             binary,
@@ -293,7 +330,10 @@ namespace ULTRADROID.Models
                             accessors,
                             materials,
                             nodeObjects[i].transform,
-                            options);
+                            options,
+                            skinBones,
+                            skinBindPoses,
+                            skinRoot);
 
                         meshCount++;
                     }
@@ -336,6 +376,102 @@ namespace ULTRADROID.Models
 
                 throw;
             }
+        }
+
+        private static SkinBuildData[] ReadSkins(
+            JsonElement gltf,
+            byte[] binary,
+            List<BufferView> views,
+            List<Accessor> accessors,
+            GameObject[] nodeObjects)
+        {
+            JsonElement skinArray = OptionalArray(gltf, "skins");
+
+            if (skinArray.ValueKind != JsonValueKind.Array)
+                return new SkinBuildData[0];
+
+            SkinBuildData[] result =
+                new SkinBuildData[skinArray.GetArrayLength()];
+
+            for (int i = 0; i < result.Length; i++)
+            {
+                JsonElement skin = skinArray[i];
+                JsonElement jointsElement = RequiredArray(skin, "joints");
+
+                if (jointsElement.GetArrayLength() == 0)
+                    throw new InvalidDataException(
+                        "Skin contains no joints.");
+
+                int[] joints = new int[jointsElement.GetArrayLength()];
+
+                for (int j = 0; j < joints.Length; j++)
+                {
+                    joints[j] = jointsElement[j].GetInt32();
+
+                    if (joints[j] < 0 || joints[j] >= nodeObjects.Length)
+                        throw new InvalidDataException(
+                            "Skin joint node index is out of range.");
+                }
+
+                Matrix4x4[] bindPoses = null;
+
+                if (skin.TryGetProperty(
+                        "inverseBindMatrices",
+                        out JsonElement bindPoseElement))
+                {
+                    Accessor accessor = GetAccessor(
+                        accessors, bindPoseElement.GetInt32());
+
+                    if (accessor.Type != "MAT4" ||
+                        accessor.ComponentType != 5126 ||
+                        accessor.Normalized ||
+                        accessor.Count != joints.Length)
+                    {
+                        throw new InvalidDataException(
+                            "Inverse bind matrices must be FLOAT MAT4 values, " +
+                            "with one matrix per joint.");
+                    }
+
+                    byte[] raw = ReadAccessorBytes(
+                        binary, views, accessor, 64);
+
+                    bindPoses = new Matrix4x4[accessor.Count];
+
+                    for (int m = 0; m < bindPoses.Length; m++)
+                    {
+                        Matrix4x4 matrix = new Matrix4x4();
+                        int offset = m * 64;
+
+                        // glTF matrices are stored column-major.
+                        for (int column = 0; column < 4; column++)
+                        {
+                            for (int row = 0; row < 4; row++)
+                            {
+                                matrix[row, column] = ReadFloat(
+                                    raw,
+                                    offset + (column * 4 + row) * 4);
+                            }
+                        }
+
+                        bindPoses[m] = matrix;
+                    }
+                }
+
+                int skeleton = GetInt(skin, "skeleton", -1);
+
+                if (skeleton >= nodeObjects.Length || skeleton < -1)
+                    throw new InvalidDataException(
+                        "Skin skeleton node index is out of range.");
+
+                result[i] = new SkinBuildData
+                {
+                    Joints = joints,
+                    Skeleton = skeleton,
+                    BindPoses = bindPoses
+                };
+            }
+
+            return result;
         }
 
         private static List<ModelAnimationClip> ReadAnimations(
@@ -689,7 +825,10 @@ namespace ULTRADROID.Models
             List<Accessor> accessors,
             List<GltfMaterial> materials,
             Transform parent,
-            ModelLoadOptions options)
+            ModelLoadOptions options,
+            Transform[] skinBones = null,
+            Matrix4x4[] skinBindPoses = null,
+            Transform skinRoot = null)
         {
             JsonElement primitives = RequiredArray(meshData, "primitives");
             string meshName = GetString(meshData, "name", "Mesh");
@@ -702,6 +841,7 @@ namespace ULTRADROID.Models
             List<Vector2>[] allUVChannels = new List<Vector2>[8];
             List<Color> allColors = new List<Color>();
             List<Vector4> allTangents = new List<Vector4>();
+            List<BoneWeight> allBoneWeights = new List<BoneWeight>();
 
             for (int channel = 0; channel < 8; channel++)
                 allUVChannels[channel] = new List<Vector2>();
@@ -751,6 +891,7 @@ namespace ULTRADROID.Models
                 Vector2[][] uvChannels = new Vector2[8][];
                 Color[] colors = null;
                 Vector4[] tangents = null;
+                BoneWeight[] boneWeights = null;
 
                 if (attributes.TryGetProperty(
                         "NORMAL", out JsonElement normalElement))
@@ -809,6 +950,27 @@ namespace ULTRADROID.Models
 
                     if (tangents.Length != vertices.Length)
                         tangents = null;
+                }
+
+                if (skinBones != null)
+                {
+                    if (!attributes.TryGetProperty(
+                            "JOINTS_0", out JsonElement jointsElement) ||
+                        !attributes.TryGetProperty(
+                            "WEIGHTS_0", out JsonElement weightsElement))
+                    {
+                        throw new InvalidDataException(
+                            "Skinned mesh primitive requires JOINTS_0 and WEIGHTS_0.");
+                    }
+
+                    boneWeights = ReadBoneWeights(
+                        binary,
+                        views,
+                        accessors,
+                        jointsElement.GetInt32(),
+                        weightsElement.GetInt32(),
+                        vertices.Length,
+                        skinBones.Length);
                 }
 
                 int[] sourceIndices;
@@ -911,6 +1073,7 @@ namespace ULTRADROID.Models
                     UVChannels = uvChannels,
                     Colors = colors,
                     Tangents = tangents,
+                    BoneWeights = boneWeights,
                     Triangles = triangles,
                     Material = primitiveMaterial
                 };
@@ -939,6 +1102,18 @@ namespace ULTRADROID.Models
                 int vertexOffset = allVertices.Count;
 
                 allVertices.AddRange(primitive.Vertices);
+
+                if (skinBones != null)
+                {
+                    if (primitive.BoneWeights == null ||
+                        primitive.BoneWeights.Length != primitive.Vertices.Length)
+                    {
+                        throw new InvalidDataException(
+                            "Skinned primitive has invalid bone weights.");
+                    }
+
+                    allBoneWeights.AddRange(primitive.BoneWeights);
+                }
 
                 if (allHaveNormals)
                 {
@@ -1073,25 +1248,243 @@ namespace ULTRADROID.Models
                 unityMesh.RecalculateTangents();
             }
 
+            if (skinBones != null)
+            {
+                if (allBoneWeights.Count != totalVertices)
+                    throw new InvalidDataException(
+                        "Combined bone weight count does not match vertex count.");
+
+                Matrix4x4[] finalBindPoses = skinBindPoses;
+
+                if (finalBindPoses == null)
+                {
+                    finalBindPoses = new Matrix4x4[skinBones.Length];
+
+                    for (int i = 0; i < skinBones.Length; i++)
+                    {
+                        finalBindPoses[i] =
+                            skinBones[i].worldToLocalMatrix *
+                            parent.localToWorldMatrix;
+                    }
+                }
+
+                if (finalBindPoses.Length != skinBones.Length)
+                    throw new InvalidDataException(
+                        "Bind pose count does not match skin joint count.");
+
+                unityMesh.boneWeights = allBoneWeights.ToArray();
+                unityMesh.bindposes = finalBindPoses;
+            }
+
             unityMesh.RecalculateBounds();
 
             GameObject meshObject = new GameObject(meshName);
             meshObject.transform.SetParent(parent, false);
 
-            MeshFilter filter = meshObject.AddComponent<MeshFilter>();
-            filter.sharedMesh = unityMesh;
+            if (skinBones != null)
+            {
+                SkinnedMeshRenderer renderer =
+                    meshObject.AddComponent<SkinnedMeshRenderer>();
 
-            MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
-            renderer.sharedMaterials = submeshMaterials.ToArray();
+                renderer.sharedMesh = unityMesh;
+                renderer.bones = skinBones;
+                renderer.rootBone = skinRoot;
+                renderer.sharedMaterials = submeshMaterials.ToArray();
 
-            if (options.CreateColliders)
+                renderer.updateWhenOffscreen = true;
+            }
+            else
+            {
+                MeshFilter filter = meshObject.AddComponent<MeshFilter>();
+                filter.sharedMesh = unityMesh;
+
+                MeshRenderer renderer =
+                    meshObject.AddComponent<MeshRenderer>();
+
+                renderer.sharedMaterials = submeshMaterials.ToArray();
+            }
+
+            if (options.CreateColliders && skinBones == null)
             {
                 MeshCollider collider =
                     meshObject.AddComponent<MeshCollider>();
 
                 collider.sharedMesh = unityMesh;
             }
+        }
 
+        private static BoneWeight[] ReadBoneWeights(
+            byte[] binary,
+            List<BufferView> views,
+            List<Accessor> accessors,
+            int jointsIndex,
+            int weightsIndex,
+            int vertexCount,
+            int jointCount)
+        {
+            Accessor joints = GetAccessor(accessors, jointsIndex);
+            Accessor weights = GetAccessor(accessors, weightsIndex);
+
+            if (joints.Type != "VEC4" ||
+                (joints.ComponentType != 5121 &&
+                 joints.ComponentType != 5123) ||
+                joints.Normalized)
+            {
+                throw new NotSupportedException(
+                    "JOINTS_0 must be an unnormalized UNSIGNED_BYTE or " +
+                    "UNSIGNED_SHORT VEC4.");
+            }
+
+            if (weights.Type != "VEC4")
+                throw new InvalidDataException(
+                    "WEIGHTS_0 must be VEC4.");
+
+            int weightComponentSize;
+
+            switch (weights.ComponentType)
+            {
+                case 5126: // FLOAT
+                    if (weights.Normalized)
+                        throw new InvalidDataException(
+                            "FLOAT WEIGHTS_0 cannot be normalized.");
+                    weightComponentSize = 4;
+                    break;
+
+                case 5121: // UNSIGNED_BYTE
+                    if (!weights.Normalized)
+                        throw new NotSupportedException(
+                            "Integer WEIGHTS_0 must be normalized.");
+                    weightComponentSize = 1;
+                    break;
+
+                case 5123: // UNSIGNED_SHORT
+                    if (!weights.Normalized)
+                        throw new NotSupportedException(
+                            "Integer WEIGHTS_0 must be normalized.");
+                    weightComponentSize = 2;
+                    break;
+
+                default:
+                    throw new NotSupportedException(
+                        "Unsupported WEIGHTS_0 component type.");
+            }
+
+            if (joints.Count != vertexCount ||
+                weights.Count != vertexCount)
+            {
+                throw new InvalidDataException(
+                    "Joint and weight counts must match the vertex count.");
+            }
+
+            int jointComponentSize =
+                joints.ComponentType == 5121 ? 1 : 2;
+
+            byte[] jointBytes = ReadAccessorBytes(
+                binary, views, joints, jointComponentSize * 4);
+
+            byte[] weightBytes = ReadAccessorBytes(
+                binary, views, weights, weightComponentSize * 4);
+
+            BoneWeight[] result = new BoneWeight[vertexCount];
+
+            for (int i = 0; i < vertexCount; i++)
+            {
+                int jointOffset = i * jointComponentSize * 4;
+                int weightOffset = i * weightComponentSize * 4;
+
+                int[] boneIndices = new int[4];
+                float[] boneWeights = new float[4];
+
+                for (int k = 0; k < 4; k++)
+                {
+                    int jo = jointOffset + k * jointComponentSize;
+
+                    int jointIndex;
+
+                    if (jointComponentSize == 1)
+                    {
+                        jointIndex = jointBytes[jo];
+                    }
+                    else
+                    {
+                        jointIndex = jointBytes[jo] |
+                            (jointBytes[jo + 1] << 8);
+                    }
+
+                    if (jointIndex < 0 || jointIndex >= jointCount)
+                    {
+                        throw new InvalidDataException(
+                            "Vertex references a joint outside its skin.");
+                    }
+
+                    boneIndices[k] = jointIndex;
+
+                    int wo = weightOffset + k * weightComponentSize;
+                    float weight;
+
+                    switch (weights.ComponentType)
+                    {
+                        case 5126:
+                            weight = ReadFloat(weightBytes, wo);
+                            break;
+
+                        case 5121:
+                            weight = weightBytes[wo] / 255f;
+                            break;
+
+                        case 5123:
+                            weight = (
+                                weightBytes[wo] |
+                                (weightBytes[wo + 1] << 8)) / 65535f;
+                            break;
+
+                        default:
+                            throw new NotSupportedException();
+                    }
+
+                    if (float.IsNaN(weight) ||
+                        float.IsInfinity(weight) ||
+                        weight < 0f)
+                    {
+                        throw new InvalidDataException(
+                            "Vertex contains an invalid bone weight.");
+                    }
+
+                    boneWeights[k] = weight;
+                }
+
+                float sum =
+                    boneWeights[0] + boneWeights[1] +
+                    boneWeights[2] + boneWeights[3];
+
+                if (sum <= 0.000001f)
+                {
+                    boneIndices[0] = 0;
+                    boneWeights[0] = 1f;
+                    boneWeights[1] = 0f;
+                    boneWeights[2] = 0f;
+                    boneWeights[3] = 0f;
+                }
+                else
+                {
+                    for (int k = 0; k < 4; k++)
+                        boneWeights[k] /= sum;
+                }
+
+                result[i] = new BoneWeight
+                {
+                    boneIndex0 = boneIndices[0],
+                    boneIndex1 = boneIndices[1],
+                    boneIndex2 = boneIndices[2],
+                    boneIndex3 = boneIndices[3],
+                    weight0 = boneWeights[0],
+                    weight1 = boneWeights[1],
+                    weight2 = boneWeights[2],
+                    weight3 = boneWeights[3]
+                };
+            }
+
+            return result;
         }
 
         private static Material CreateDefaultMaterial()
