@@ -1,68 +1,155 @@
 
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ULTRADROID.Models
 {
     public sealed class GlbAnimationPlayer : MonoBehaviour
     {
+        private int stateId;
+
         public GlbAnimationPlayer(IntPtr ptr) : base(ptr)
         {
         }
 
-        private ModelInstance model;
-        private ModelAnimationClip currentClip;
+        // Only an integer crosses the IL2CPP component boundary.
+        public void BindState(int id)
+        {
+            stateId = id;
+        }
 
-        private float playbackTime;
-        private bool isPlaying;
-        private bool initialized;
+        public bool Loop
+        {
+            get => GlbAnimationPlayerFactory.GetLoop(stateId);
+            set => GlbAnimationPlayerFactory.SetLoop(stateId, value);
+        }
 
-        public bool Loop { get; set; } = true;
+        public float PlaybackSpeed
+        {
+            get => GlbAnimationPlayerFactory.GetSpeed(stateId);
+            set => GlbAnimationPlayerFactory.SetSpeed(stateId, value);
+        }
 
-        public float PlaybackSpeed { get; set; } = 1f;
-
-        public bool IsPlaying => isPlaying;
+        public bool IsPlaying =>
+            GlbAnimationPlayerFactory.IsPlaying(stateId);
 
         public string CurrentClipName =>
-            currentClip != null ? currentClip.Name : null;
+            GlbAnimationPlayerFactory.GetClipName(stateId);
 
-        public float CurrentTime => playbackTime;
+        public float CurrentTime =>
+            GlbAnimationPlayerFactory.GetTime(stateId);
 
         public float Duration =>
-            currentClip != null ? currentClip.Duration : 0f;
-
-        internal void InitializeModel(ModelInstance modelInstance)
-        {
-            if (modelInstance == null || !modelInstance.IsValid)
-                throw new ArgumentException("A valid ModelInstance is required.");
-
-            model = modelInstance;
-            currentClip = null;
-            playbackTime = 0f;
-            isPlaying = false;
-            initialized = true;
-        }
+            GlbAnimationPlayerFactory.GetDuration(stateId);
 
         public bool Play(string clipName)
         {
-            if (!initialized || model == null || !model.IsValid)
-                return false;
+            return GlbAnimationPlayerFactory.Play(stateId, clipName);
+        }
 
-            if (string.IsNullOrWhiteSpace(clipName))
-                return false;
+        public bool Play(int clipIndex)
+        {
+            return GlbAnimationPlayerFactory.Play(stateId, clipIndex);
+        }
 
-            foreach (ModelAnimationClip clip in model.Animations)
+        public void Pause()
+        {
+            GlbAnimationPlayerFactory.Pause(stateId);
+        }
+
+        public void Resume()
+        {
+            GlbAnimationPlayerFactory.Resume(stateId);
+        }
+
+        public void Stop()
+        {
+            GlbAnimationPlayerFactory.Stop(stateId);
+        }
+
+        public void Seek(float time)
+        {
+            GlbAnimationPlayerFactory.Seek(stateId, time);
+        }
+
+        public void Update()
+        {
+            GlbAnimationPlayerFactory.Tick(stateId, Time.deltaTime);
+        }
+
+        public void OnDestroy()
+        {
+            GlbAnimationPlayerFactory.Release(stateId);
+        }
+    }
+
+    public static class GlbAnimationPlayerFactory
+    {
+        private sealed class PlaybackState
+        {
+            public ModelInstance Model;
+            public ModelAnimationClip Clip;
+            public float Time;
+            public float Speed = 1f;
+            public bool Loop = true;
+            public bool Playing;
+        }
+
+        private static readonly Dictionary<int, PlaybackState> States =
+            new Dictionary<int, PlaybackState>();
+
+        private static int nextId = 1;
+
+        public static GlbAnimationPlayer Attach(ModelInstance model)
+        {
+            if (model == null || !model.IsValid || model.Root == null)
+                throw new ArgumentException("A valid model is required.");
+
+            GlbAnimationPlayer player =
+                model.Root.AddComponent<GlbAnimationPlayer>();
+
+            int id = nextId++;
+
+            States[id] = new PlaybackState
             {
+                Model = model
+            };
+
+            player.BindState(id);
+            return player;
+        }
+
+        private static PlaybackState GetState(int id)
+        {
+            if (id == 0 || !States.TryGetValue(id, out PlaybackState state))
+                return null;
+
+            if (state.Model == null || !state.Model.IsValid)
+                return null;
+
+            return state;
+        }
+
+        public static bool Play(int id, string name)
+        {
+            PlaybackState state = GetState(id);
+
+            if (state == null || string.IsNullOrWhiteSpace(name))
+                return false;
+
+            for (int i = 0; i < state.Model.Animations.Count; i++)
+            {
+                ModelAnimationClip clip = state.Model.Animations[i];
+
                 if (string.Equals(
-                    clip.Name,
-                    clipName,
+                    clip.Name, name,
                     StringComparison.OrdinalIgnoreCase))
                 {
-                    currentClip = clip;
-                    playbackTime = 0f;
-                    isPlaying = true;
-
-                    ApplyAnimation(0f);
+                    state.Clip = clip;
+                    state.Time = 0f;
+                    state.Playing = true;
+                    Apply(state, 0f);
                     return true;
                 }
             }
@@ -70,114 +157,172 @@ namespace ULTRADROID.Models
             return false;
         }
 
-        public bool Play(int clipIndex)
+        public static bool Play(int id, int index)
         {
-            if (!initialized || model == null || !model.IsValid)
+            PlaybackState state = GetState(id);
+
+            if (state == null ||
+                index < 0 ||
+                index >= state.Model.Animations.Count)
                 return false;
 
-            if (clipIndex < 0 || clipIndex >= model.Animations.Count)
-                return false;
-
-            currentClip = model.Animations[clipIndex];
-            playbackTime = 0f;
-            isPlaying = true;
-
-            ApplyAnimation(0f);
+            state.Clip = state.Model.Animations[index];
+            state.Time = 0f;
+            state.Playing = true;
+            Apply(state, 0f);
             return true;
         }
 
-        public void Pause()
+        public static void Pause(int id)
         {
-            isPlaying = false;
+            PlaybackState state = GetState(id);
+            if (state != null)
+                state.Playing = false;
         }
 
-        public void Resume()
+        public static void Resume(int id)
         {
-            if (initialized &&
-                model != null &&
-                model.IsValid &&
-                currentClip != null)
-            {
-                isPlaying = true;
-            }
+            PlaybackState state = GetState(id);
+            if (state != null && state.Clip != null)
+                state.Playing = true;
         }
 
-        public void Stop()
+        public static void Stop(int id)
         {
-            isPlaying = false;
-            playbackTime = 0f;
-
-            if (currentClip != null)
-                ApplyAnimation(0f);
-        }
-
-        public void Seek(float time)
-        {
-            if (currentClip == null)
+            PlaybackState state = GetState(id);
+            if (state == null)
                 return;
 
-            playbackTime = Mathf.Clamp(time, 0f, currentClip.Duration);
-            ApplyAnimation(playbackTime);
+            state.Playing = false;
+            state.Time = 0f;
+
+            if (state.Clip != null)
+                Apply(state, 0f);
         }
 
-        public void Update()
+        public static void Seek(int id, float time)
         {
-            if (!isPlaying ||
-                currentClip == null ||
-                model == null ||
-                !model.IsValid)
+            PlaybackState state = GetState(id);
+            if (state == null || state.Clip == null)
+                return;
+
+            state.Time = Mathf.Clamp(time, 0f, state.Clip.Duration);
+            Apply(state, state.Time);
+        }
+
+        public static bool IsPlaying(int id)
+        {
+            PlaybackState state = GetState(id);
+            return state != null && state.Playing;
+        }
+
+        public static string GetClipName(int id)
+        {
+            PlaybackState state = GetState(id);
+            return state != null && state.Clip != null
+                ? state.Clip.Name : null;
+        }
+
+        public static float GetTime(int id)
+        {
+            PlaybackState state = GetState(id);
+            return state != null ? state.Time : 0f;
+        }
+
+        public static float GetDuration(int id)
+        {
+            PlaybackState state = GetState(id);
+            return state != null && state.Clip != null
+                ? state.Clip.Duration : 0f;
+        }
+
+        public static bool GetLoop(int id)
+        {
+            PlaybackState state = GetState(id);
+            return state != null && state.Loop;
+        }
+
+        public static void SetLoop(int id, bool value)
+        {
+            PlaybackState state = GetState(id);
+            if (state != null)
+                state.Loop = value;
+        }
+
+        public static float GetSpeed(int id)
+        {
+            PlaybackState state = GetState(id);
+            return state != null ? state.Speed : 1f;
+        }
+
+        public static void SetSpeed(int id, float value)
+        {
+            PlaybackState state = GetState(id);
+            if (state != null && !float.IsNaN(value) &&
+                !float.IsInfinity(value))
+                state.Speed = value;
+        }
+
+        public static void Tick(int id, float deltaTime)
+        {
+            PlaybackState state = GetState(id);
+
+            if (state == null || !state.Playing || state.Clip == null)
+                return;
+
+            float duration = state.Clip.Duration;
+
+            if (duration <= 0f)
             {
+                Apply(state, 0f);
+                if (!state.Loop)
+                    state.Playing = false;
                 return;
             }
 
-            if (currentClip.Duration <= 0f)
+            state.Time += deltaTime * state.Speed;
+
+            if (state.Loop)
             {
-                playbackTime = 0f;
-                ApplyAnimation(0f);
+                state.Time %= duration;
 
-                if (!Loop)
-                    isPlaying = false;
-
-                return;
-            }
-
-            playbackTime += Time.deltaTime * PlaybackSpeed;
-
-            if (Loop)
-            {
-                playbackTime %= currentClip.Duration;
-
-                if (playbackTime < 0f)
-                    playbackTime += currentClip.Duration;
+                if (state.Time < 0f)
+                    state.Time += duration;
             }
             else
             {
-                if (playbackTime >= currentClip.Duration)
+                if (state.Time >= duration)
                 {
-                    playbackTime = currentClip.Duration;
-                    ApplyAnimation(playbackTime);
-                    isPlaying = false;
+                    state.Time = duration;
+                    Apply(state, state.Time);
+                    state.Playing = false;
                     return;
                 }
 
-                if (playbackTime <= 0f && PlaybackSpeed < 0f)
+                if (state.Time <= 0f && state.Speed < 0f)
                 {
-                    playbackTime = 0f;
-                    ApplyAnimation(playbackTime);
-                    isPlaying = false;
+                    state.Time = 0f;
+                    Apply(state, 0f);
+                    state.Playing = false;
                     return;
                 }
             }
 
-            ApplyAnimation(playbackTime);
+            Apply(state, state.Time);
         }
 
-        private void ApplyAnimation(float time)
+        public static void Release(int id)
         {
-            if (currentClip == null)
+            if (id != 0)
+                States.Remove(id);
+        }
+
+        private static void Apply(PlaybackState state, float time)
+        {
+            if (state == null || state.Clip == null)
                 return;
 
-            foreach (ModelAnimationChannel channel in currentClip.Channels)
+            foreach (ModelAnimationChannel channel in state.Clip.Channels)
             {
                 Transform target = channel.Target;
 
@@ -187,13 +332,9 @@ namespace ULTRADROID.Models
                 float[] times = channel.Times;
                 Vector4[] values = channel.Values;
 
-                if (times == null ||
-                    values == null ||
-                    times.Length == 0 ||
-                    times.Length != values.Length)
-                {
+                if (times == null || values == null ||
+                    times.Length == 0 || times.Length != values.Length)
                     continue;
-                }
 
                 int last = times.Length - 1;
 
@@ -214,12 +355,12 @@ namespace ULTRADROID.Models
 
                 while (low + 1 < high)
                 {
-                    int middle = low + (high - low) / 2;
+                    int mid = low + (high - low) / 2;
 
-                    if (times[middle] <= time)
-                        low = middle;
+                    if (times[mid] <= time)
+                        low = mid;
                     else
-                        high = middle;
+                        high = mid;
                 }
 
                 if (channel.Interpolation == ModelAnimationInterpolation.Step)
@@ -228,37 +369,28 @@ namespace ULTRADROID.Models
                     continue;
                 }
 
-                float segmentLength = times[high] - times[low];
-
-                float t = segmentLength > 0f
-                    ? (time - times[low]) / segmentLength
-                    : 0f;
+                float length = times[high] - times[low];
+                float t = length > 0f
+                    ? (time - times[low]) / length : 0f;
 
                 if (channel.Path == ModelAnimationPath.Rotation)
                 {
                     Quaternion a = new Quaternion(
-                        values[low].x,
-                        values[low].y,
-                        values[low].z,
-                        values[low].w);
+                        values[low].x, values[low].y,
+                        values[low].z, values[low].w);
 
                     Quaternion b = new Quaternion(
-                        values[high].x,
-                        values[high].y,
-                        values[high].z,
-                        values[high].w);
+                        values[high].x, values[high].y,
+                        values[high].z, values[high].w);
 
-                    Quaternion rotation = Quaternion.Slerp(
-                        a, b, t);
-
-                    target.localRotation = rotation;
+                    target.localRotation = Quaternion.Slerp(a, b, t);
                 }
                 else
                 {
-                    Vector4 value = Vector4.Lerp(
-                        values[low], values[high], t);
-
-                    ApplyValue(target, channel.Path, value);
+                    ApplyValue(
+                        target,
+                        channel.Path,
+                        Vector4.Lerp(values[low], values[high], t));
                 }
             }
         }
@@ -271,8 +403,8 @@ namespace ULTRADROID.Models
             switch (path)
             {
                 case ModelAnimationPath.Translation:
-                    target.localPosition = new Vector3(
-                        value.x, value.y, value.z);
+                    target.localPosition =
+                        new Vector3(value.x, value.y, value.z);
                     break;
 
                 case ModelAnimationPath.Rotation:
@@ -281,25 +413,10 @@ namespace ULTRADROID.Models
                     break;
 
                 case ModelAnimationPath.Scale:
-                    target.localScale = new Vector3(
-                        value.x, value.y, value.z);
+                    target.localScale =
+                        new Vector3(value.x, value.y, value.z);
                     break;
             }
-        }
-    }
-
-    public static class GlbAnimationPlayerFactory
-    {
-        public static GlbAnimationPlayer Attach(ModelInstance model)
-        {
-            if (model == null || !model.IsValid || model.Root == null)
-                throw new ArgumentException("A valid model is required.");
-
-            GlbAnimationPlayer player =
-                model.Root.AddComponent<GlbAnimationPlayer>();
-
-            player.InitializeModel(model);
-            return player;
         }
     }
 }
