@@ -21,16 +21,61 @@ namespace ULTRADROID.Models
         public Transform Parent { get; set; }
     }
 
+    public enum ModelAnimationPath
+    {
+        Translation,
+        Rotation,
+        Scale
+    }
+
+    public enum ModelAnimationInterpolation
+    {
+        Linear,
+        Step
+    }
+
+    public sealed class ModelAnimationClip
+    {
+        public string Name { get; }
+        public float Duration { get; }
+
+        internal List<ModelAnimationChannel> Channels { get; }
+
+        internal ModelAnimationClip(
+            string name,
+            float duration,
+            List<ModelAnimationChannel> channels)
+        {
+            Name = name;
+            Duration = duration;
+            Channels = channels;
+        }
+    }
+
+    internal sealed class ModelAnimationChannel
+    {
+        public Transform Target;
+        public ModelAnimationPath Path;
+        public ModelAnimationInterpolation Interpolation;
+        public float[] Times;
+        public Vector4[] Values;
+    }
+
     public sealed class ModelInstance
     {
         public GameObject Root { get; }
         public string SourcePath { get; }
         public bool IsValid => Root != null;
+        public IReadOnlyList<ModelAnimationClip> Animations { get; }
 
-        internal ModelInstance(GameObject root, string path)
+        internal ModelInstance(
+            GameObject root,
+            string path,
+            List<ModelAnimationClip> animations)
         {
             Root = root;
             SourcePath = path;
+            Animations = animations ?? new List<ModelAnimationClip>();
         }
 
         public void SetPosition(Vector3 position)
@@ -274,7 +319,14 @@ namespace ULTRADROID.Models
                     if (meshCount == 0)
                         throw new NotSupportedException("No node-referenced meshes were found.");
 
-                    return new ModelInstance(rootObject, path);
+                    List<ModelAnimationClip> animations = ReadAnimations(
+                        gltf,
+                        binary,
+                        views,
+                        accessors,
+                        nodeObjects);
+
+                    return new ModelInstance(rootObject, path, animations);
                 }
             }
             catch
@@ -284,6 +336,261 @@ namespace ULTRADROID.Models
 
                 throw;
             }
+        }
+
+        private static List<ModelAnimationClip> ReadAnimations(
+            JsonElement gltf,
+            byte[] binary,
+            List<BufferView> views,
+            List<Accessor> accessors,
+            GameObject[] nodeObjects)
+        {
+            List<ModelAnimationClip> result =
+                new List<ModelAnimationClip>();
+
+            JsonElement animations = OptionalArray(gltf, "animations");
+
+            if (animations.ValueKind != JsonValueKind.Array)
+                return result;
+
+            int animationIndex = 0;
+
+            foreach (JsonElement animation in animations.EnumerateArray())
+            {
+                string name = GetString(
+                    animation, "name", "Animation_" + animationIndex);
+
+                JsonElement samplers = RequiredArray(animation, "samplers");
+                JsonElement channels = RequiredArray(animation, "channels");
+
+                List<ModelAnimationChannel> parsedChannels =
+                    new List<ModelAnimationChannel>();
+
+                float duration = 0f;
+
+                foreach (JsonElement channel in channels.EnumerateArray())
+                {
+                    int samplerIndex = GetInt(channel, "sampler", -1);
+
+                    if (samplerIndex < 0 ||
+                        samplerIndex >= samplers.GetArrayLength())
+                    {
+                        throw new InvalidDataException(
+                            "Animation sampler index is out of range.");
+                    }
+
+                    if (!channel.TryGetProperty(
+                            "target", out JsonElement target))
+                    {
+                        throw new InvalidDataException(
+                            "Animation channel has no target.");
+                    }
+
+                    int nodeIndex = GetInt(target, "node", -1);
+
+                    if (nodeIndex < 0 || nodeIndex >= nodeObjects.Length)
+                    {
+                        throw new InvalidDataException(
+                            "Animation target node index is out of range.");
+                    }
+
+                    string path = GetString(target, "path", "");
+
+                    ModelAnimationPath animationPath;
+
+                    switch (path)
+                    {
+                        case "translation":
+                            animationPath = ModelAnimationPath.Translation;
+                            break;
+
+                        case "rotation":
+                            animationPath = ModelAnimationPath.Rotation;
+                            break;
+
+                        case "scale":
+                            animationPath = ModelAnimationPath.Scale;
+                            break;
+
+                        case "weights":
+                            // Morph-target animation is not supported yet.
+                            continue;
+
+                        default:
+                            throw new NotSupportedException(
+                                "Unsupported animation target path: " + path);
+                    }
+
+                    JsonElement sampler = samplers[samplerIndex];
+
+                    int inputIndex = GetInt(sampler, "input", -1);
+                    int outputIndex = GetInt(sampler, "output", -1);
+
+                    Accessor inputAccessor = GetAccessor(accessors, inputIndex);
+                    Accessor outputAccessor = GetAccessor(accessors, outputIndex);
+
+                    if (inputAccessor.Type != "SCALAR" ||
+                        inputAccessor.ComponentType != 5126 ||
+                        inputAccessor.Normalized)
+                    {
+                        throw new NotSupportedException(
+                            "Animation input must be a non-normalized FLOAT SCALAR.");
+                    }
+
+                    string interpolationName = GetString(
+                        sampler, "interpolation", "LINEAR");
+
+                    ModelAnimationInterpolation interpolation;
+
+                    switch (interpolationName)
+                    {
+                        case "LINEAR":
+                            interpolation = ModelAnimationInterpolation.Linear;
+                            break;
+
+                        case "STEP":
+                            interpolation = ModelAnimationInterpolation.Step;
+                            break;
+
+                        case "CUBICSPLINE":
+                            throw new NotSupportedException(
+                                "CUBICSPLINE animation interpolation is not supported yet.");
+
+                        default:
+                            throw new NotSupportedException(
+                                "Unsupported animation interpolation: " +
+                                interpolationName);
+                    }
+
+                    int expectedComponents =
+                        animationPath == ModelAnimationPath.Rotation ? 4 : 3;
+
+                    string expectedType =
+                        expectedComponents == 4 ? "VEC4" : "VEC3";
+
+                    if (outputAccessor.Type != expectedType ||
+                        outputAccessor.ComponentType != 5126 ||
+                        outputAccessor.Normalized)
+                    {
+                        throw new NotSupportedException(
+                            "Animation output must be a non-normalized FLOAT " +
+                            expectedType + ".");
+                    }
+
+                    float[] times = ReadAnimationTimes(
+                        binary, views, inputAccessor);
+
+                    Vector4[] values = ReadAnimationValues(
+                        binary, views, outputAccessor, expectedComponents);
+
+                    if (times.Length == 0)
+                    {
+                        throw new InvalidDataException(
+                            "Animation sampler contains no keyframes.");
+                    }
+
+                    if (times.Length != values.Length)
+                    {
+                        throw new InvalidDataException(
+                            "Animation input and output key counts do not match.");
+                    }
+
+                    for (int i = 0; i < times.Length; i++)
+                    {
+                        if (float.IsNaN(times[i]) ||
+                            float.IsInfinity(times[i]) ||
+                            times[i] < 0f)
+                        {
+                            throw new InvalidDataException(
+                                "Animation contains an invalid keyframe time.");
+                        }
+
+                        if (i > 0 && times[i] <= times[i - 1])
+                        {
+                            throw new InvalidDataException(
+                                "Animation keyframe times must be strictly increasing.");
+                        }
+                    }
+
+                    for (int i = 0; i < values.Length; i++)
+                    {
+                        Vector4 value = values[i];
+
+                        if (float.IsNaN(value.x) || float.IsInfinity(value.x) ||
+                            float.IsNaN(value.y) || float.IsInfinity(value.y) ||
+                            float.IsNaN(value.z) || float.IsInfinity(value.z) ||
+                            float.IsNaN(value.w) || float.IsInfinity(value.w))
+                        {
+                            throw new InvalidDataException(
+                                "Animation contains an invalid keyframe value.");
+                        }
+                    }
+
+                    duration = Mathf.Max(duration, times[times.Length - 1]);
+
+                    parsedChannels.Add(new ModelAnimationChannel
+                    {
+                        Target = nodeObjects[nodeIndex].transform,
+                        Path = animationPath,
+                        Interpolation = interpolation,
+                        Times = times,
+                        Values = values
+                    });
+                }
+
+                result.Add(new ModelAnimationClip(
+                    name, duration, parsedChannels));
+
+                animationIndex++;
+            }
+
+            return result;
+        }
+
+        private static float[] ReadAnimationTimes(
+            byte[] binary,
+            List<BufferView> views,
+            Accessor accessor)
+        {
+            byte[] raw = ReadAccessorBytes(
+                binary, views, accessor, 4);
+
+            float[] result = new float[accessor.Count];
+
+            for (int i = 0; i < result.Length; i++)
+                result[i] = ReadFloat(raw, i * 4);
+
+            return result;
+        }
+
+        private static Vector4[] ReadAnimationValues(
+            byte[] binary,
+            List<BufferView> views,
+            Accessor accessor,
+            int components)
+        {
+            int elementSize = components * 4;
+
+            byte[] raw = ReadAccessorBytes(
+                binary, views, accessor, elementSize);
+
+            Vector4[] result = new Vector4[accessor.Count];
+
+            for (int i = 0; i < result.Length; i++)
+            {
+                int offset = i * elementSize;
+
+                float x = ReadFloat(raw, offset);
+                float y = ReadFloat(raw, offset + 4);
+                float z = ReadFloat(raw, offset + 8);
+                float w = components == 4
+                    ? ReadFloat(raw, offset + 12)
+                    : 0f;
+
+                result[i] = new Vector4(x, y, z, w);
+            }
+
+            return result;
         }
 
         private static void ReadGlb(string path, out string json, out byte[] binary)
