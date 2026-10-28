@@ -777,6 +777,21 @@ namespace ULTRADROID.Models
             MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
             renderer.sharedMaterials = submeshMaterials.ToArray();
 
+            for (int i = 0; i < submeshMaterials.Count; i++)
+            {
+                Material mat = submeshMaterials[i];
+
+                Debug.Log(
+                    "[ULTRADROID Models API] Renderer material[" + i + "]='" +
+                    (mat != null ? mat.name : "NULL") +
+                    "', shader='" +
+                    (mat != null && mat.shader != null
+                        ? mat.shader.name
+                        : "NULL") +
+                    "', supported=" +
+                    (mat != null && mat.shader != null && mat.shader.isSupported));
+            }
+
             if (options.CreateColliders)
             {
                 MeshCollider collider =
@@ -789,95 +804,70 @@ namespace ULTRADROID.Models
                 "[ULTRADROID Models API] Built mesh '" + meshName +
                 "': vertices=" + totalVertices +
                 ", submeshes=" + builtPrimitives.Count +
-                ", materials=" + submeshMaterials.Count +
-                ", colors=" + anyHaveColors +
-                ", tangents=" + anyHaveTangents +
-                ", UV channels=" + Array.FindAll(
-                    anyHaveUVChannel, channel => channel).Length);
+                ", materials=" + submeshMaterials.Count);
         }
 
         private static Material CreateDefaultMaterial()
         {
-            Shader shader = null;
-
-            // Prefer the Built-in Render Pipeline shader.
-            try
+            string[] preferredShaders =
             {
-                shader = Shader.Find("Standard");
+                "Standard",
+                "Universal Render Pipeline/Lit",
+                "HDRP/Lit",
+                "Legacy Shaders/Diffuse",
+                "Legacy Shaders/Specular"
+            };
 
-                if (shader != null && !shader.isSupported)
-                    shader = null;
-            }
-            catch (Exception)
-            {
-                shader = null;
-            }
-
-            // Try URP Lit if Standard is unavailable.
-            if (shader == null)
+            foreach (string shaderName in preferredShaders)
             {
                 try
                 {
-                    shader = Shader.Find("Universal Render Pipeline/Lit");
+                    Shader candidate = Shader.Find(shaderName);
 
-                    if (shader != null && !shader.isSupported)
-                        shader = null;
+                    if (candidate == null || !candidate.isSupported)
+                        continue;
+
+                    Material material = new Material(candidate);
+
+                    if (material.HasProperty("_BaseColor"))
+                        material.SetColor("_BaseColor", Color.white);
+
+                    if (material.HasProperty("_Color"))
+                        material.SetColor("_Color", Color.white);
+
+                    if (material.HasProperty("_Metallic"))
+                        material.SetFloat("_Metallic", 0f);
+
+                    if (material.HasProperty("_Smoothness"))
+                        material.SetFloat("_Smoothness", 0.3f);
+
+                    if (material.HasProperty("_Glossiness"))
+                        material.SetFloat("_Glossiness", 0.3f);
+
+                    Debug.Log(
+                        "[ULTRADROID Models API] Selected lit shader: " +
+                        candidate.name +
+                        ", supported=" + candidate.isSupported +
+                        ", color=" + material.HasProperty("_Color") +
+                        ", baseColor=" + material.HasProperty("_BaseColor") +
+                        ", metallic=" + material.HasProperty("_Metallic") +
+                        ", smoothness=" +
+                        (material.HasProperty("_Smoothness") ||
+                         material.HasProperty("_Glossiness")));
+
+                    return material;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    shader = null;
+                    Debug.LogWarning(
+                        "[ULTRADROID Models API] Could not create shader '" +
+                        shaderName + "': " + ex.Message);
                 }
             }
 
-            // Final fallbacks.
-            if (shader == null)
-            {
-                try
-                {
-                    shader = Shader.Find("Unlit/Texture");
-
-                    if (shader != null && !shader.isSupported)
-                        shader = null;
-                }
-                catch (Exception)
-                {
-                    shader = null;
-                }
-            }
-
-            if (shader == null)
-            {
-                try
-                {
-                    shader = Shader.Find("Unlit/Color");
-
-                    if (shader != null && !shader.isSupported)
-                        shader = null;
-                }
-                catch (Exception)
-                {
-                    shader = null;
-                }
-            }
-
-            if (shader == null)
-            {
-                throw new NotSupportedException(
-                    "No supported Unity shader was found.");
-            }
-
-            Material material = new Material(shader);
-
-            if (material.HasProperty("_BaseColor"))
-                material.SetColor("_BaseColor", Color.white);
-
-            if (material.HasProperty("_Color"))
-                material.SetColor("_Color", Color.white);
-
-            Debug.Log(
-                "[ULTRADROID Models API] Selected shader: " + shader.name);
-
-            return material;
+            throw new NotSupportedException(
+                "No supported lit shader was found. " +
+                "Check the Unity render pipeline and available game shaders.");
         }
 
         private static List<GltfImage> ReadImages(
@@ -1502,125 +1492,24 @@ namespace ULTRADROID.Models
         {
             Accessor accessor = GetAccessor(accessors, accessorIndex);
 
-            if (accessor.Type != "VEC2")
-                throw new InvalidDataException(
-                    "Texture coordinates must use VEC2.");
-
-            int componentSize;
-
-            switch (accessor.ComponentType)
+            if (accessor.Type != "VEC2" ||
+                accessor.ComponentType != 5126 ||
+                accessor.Normalized)
             {
-                case 5126: // FLOAT
-                    componentSize = 4;
-
-                    if (accessor.Normalized)
-                        throw new InvalidDataException(
-                            "FLOAT texture coordinates cannot be normalized.");
-                    break;
-
-                case 5121: // UNSIGNED_BYTE
-                    componentSize = 1;
-
-                    if (!accessor.Normalized)
-                        throw new NotSupportedException(
-                            "Integer texture coordinates must be normalized.");
-                    break;
-
-                case 5123: // UNSIGNED_SHORT
-                    componentSize = 2;
-
-                    if (!accessor.Normalized)
-                        throw new NotSupportedException(
-                            "Integer texture coordinates must be normalized.");
-                    break;
-
-                default:
-                    throw new NotSupportedException(
-                        "Unsupported texture coordinate component type: " +
-                        accessor.ComponentType);
+                throw new NotSupportedException(
+                    "Texture coordinates must use non-normalized FLOAT VEC2.");
             }
 
-            int elementSize = componentSize * 2;
-
-            byte[] raw = ReadAccessorBytes(
-                binary, views, accessor, elementSize);
-
+            byte[] raw = ReadAccessorBytes(binary, views, accessor, 8);
             Vector2[] result = new Vector2[accessor.Count];
 
             for (int i = 0; i < result.Length; i++)
             {
-                int offset = i * elementSize;
+                int offset = i * 8;
+                float u = ReadFloat(raw, offset);
+                float v = ReadFloat(raw, offset + 4);
 
-                float u = ReadUVComponent(
-                    raw, offset, accessor.ComponentType);
-
-                float v = ReadUVComponent(
-                    raw, offset + componentSize, accessor.ComponentType);
-
-                result[i] = new Vector2(
-                    u, flipV ? 1f - v : v);
-            }
-
-            return result;
-        }
-
-        private static float ReadUVComponent(
-            byte[] raw,
-            int offset,
-            int componentType)
-        {
-            switch (componentType)
-            {
-                case 5126: // FLOAT
-                    return ReadFloat(raw, offset);
-
-                case 5121: // UNSIGNED_BYTE
-                    return raw[offset] / 255f;
-
-                case 5123: // UNSIGNED_SHORT
-                    int value = raw[offset] | (raw[offset + 1] << 8);
-                    return value / 65535f;
-
-                default:
-                    throw new NotSupportedException(
-                        "Unsupported UV component type.");
-            }
-        }
-
-        private static Vector4[] ReadTangents(
-            byte[] binary,
-            List<BufferView> views,
-            List<Accessor> accessors,
-            int accessorIndex)
-        {
-            Accessor accessor = GetAccessor(accessors, accessorIndex);
-
-            if (accessor.Type != "VEC4" || accessor.ComponentType != 5126)
-            {
-                throw new NotSupportedException(
-                    "TANGENT attributes must use FLOAT VEC4 components.");
-            }
-
-            if (accessor.Normalized)
-            {
-                throw new InvalidDataException(
-                    "FLOAT TANGENT attributes cannot be normalized.");
-            }
-
-            byte[] raw = ReadAccessorBytes(
-                binary, views, accessor, 16);
-
-            Vector4[] result = new Vector4[accessor.Count];
-
-            for (int i = 0; i < result.Length; i++)
-            {
-                int offset = i * 16;
-
-                result[i] = new Vector4(
-                    ReadFloat(raw, offset),
-                    ReadFloat(raw, offset + 4),
-                    ReadFloat(raw, offset + 8),
-                    ReadFloat(raw, offset + 12));
+                result[i] = new Vector2(u, flipV ? 1f - v : v);
             }
 
             return result;
