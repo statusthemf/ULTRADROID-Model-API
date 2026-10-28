@@ -257,9 +257,24 @@ namespace ULTRADROID.Models.Test
 
                     return;
                 }
+                
+                
+                
+                SkinnedMeshRenderer[] skinned =
+                instance.Root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+
+                MeshRenderer[] staticMeshes =
+                instance.Root.GetComponentsInChildren<MeshRenderer>(true);
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Animation Debug] Skinned renderers: " + skinned.Length);
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Animation Debug] Static mesh renderers: " + staticMeshes.Length);
 
                 ModelsTestPlugin.Log.LogInfo(
                     "[Model] GLB loaded successfully: " + instance.SourcePath);
+
 
                 int animationCount = instance.Animations.Count;
 
