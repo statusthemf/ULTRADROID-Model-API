@@ -615,7 +615,13 @@ namespace ULTRADROID.Models
             if (totalVertices > 65535)
                 unityMesh.indexFormat = IndexFormat.UInt32;
 
-            unityMesh.SetVertices(allVertices);
+            Il2CppSystem.Collections.Generic.List<Vector3> il2cppVertices =
+                new Il2CppSystem.Collections.Generic.List<Vector3>();
+
+            for (int i = 0; i < allVertices.Count; i++)
+                il2cppVertices.Add(allVertices[i]);
+
+            unityMesh.SetVertices(il2cppVertices);
             unityMesh.subMeshCount = builtPrimitives.Count;
 
             for (int i = 0; i < submeshTriangles.Count; i++)
@@ -625,12 +631,30 @@ namespace ULTRADROID.Models
             }
 
             if (allHaveNormals && allNormals.Count == totalVertices)
-                unityMesh.SetNormals(allNormals);
+            {
+                Il2CppSystem.Collections.Generic.List<Vector3> il2cppNormals =
+                    new Il2CppSystem.Collections.Generic.List<Vector3>();
+
+                for (int i = 0; i < allNormals.Count; i++)
+                    il2cppNormals.Add(allNormals[i]);
+
+                unityMesh.SetNormals(il2cppNormals);
+            }
             else
+            {
                 unityMesh.RecalculateNormals();
+            }
 
             if (anyHaveUVs && allUVs.Count == totalVertices)
-                unityMesh.SetUVs(0, allUVs);
+            {
+                Il2CppSystem.Collections.Generic.List<Vector2> il2cppUVs =
+                    new Il2CppSystem.Collections.Generic.List<Vector2>();
+
+                for (int i = 0; i < allUVs.Count; i++)
+                    il2cppUVs.Add(allUVs[i]);
+
+                unityMesh.SetUVs(0, il2cppUVs);
+            }
 
             unityMesh.RecalculateBounds();
 
