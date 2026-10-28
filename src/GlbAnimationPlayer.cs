@@ -31,7 +31,7 @@ namespace ULTRADROID.Models
         public float Duration =>
             currentClip != null ? currentClip.Duration : 0f;
 
-        public void Initialize(ModelInstance modelInstance)
+        internal void InitializeModel(ModelInstance modelInstance)
         {
             if (modelInstance == null || !modelInstance.IsValid)
                 throw new ArgumentException("A valid ModelInstance is required.");
@@ -120,7 +120,7 @@ namespace ULTRADROID.Models
             ApplyAnimation(playbackTime);
         }
 
-        private void Update()
+        public void Update()
         {
             if (!isPlaying ||
                 currentClip == null ||
@@ -285,6 +285,21 @@ namespace ULTRADROID.Models
                         value.x, value.y, value.z);
                     break;
             }
+        }
+    }
+
+    public static class GlbAnimationPlayerFactory
+    {
+        public static GlbAnimationPlayer Attach(ModelInstance model)
+        {
+            if (model == null || !model.IsValid || model.Root == null)
+                throw new ArgumentException("A valid model is required.");
+
+            GlbAnimationPlayer player =
+                model.Root.AddComponent<GlbAnimationPlayer>();
+
+            player.InitializeModel(model);
+            return player;
         }
     }
 }
