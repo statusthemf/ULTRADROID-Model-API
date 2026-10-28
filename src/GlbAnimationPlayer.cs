@@ -6,6 +6,10 @@ namespace ULTRADROID.Models
 {
     public sealed class GlbAnimationPlayer : MonoBehaviour
     {
+        public GlbAnimationPlayer(IntPtr ptr) : base(ptr)
+        {
+        }
+
         private ModelInstance model;
         private ModelAnimationClip currentClip;
 
