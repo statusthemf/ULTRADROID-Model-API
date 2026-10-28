@@ -1,4 +1,3 @@
-
 using System;
 using System.IO;
 using BepInEx;
@@ -241,9 +240,9 @@ namespace ULTRADROID.Models.Test
                 {
                     Name = "BladesOfChaosTest",
                     Parent = currentCamera.transform,
-                    Position = new Vector3(0f, -1f, 2f),
+                    Position = new Vector3(0f, 0f, 1f),
                     RotationEuler = Vector3.zero,
-                    Scale = new Vector3(0.05f, 0.05f, 0.05f),
+                    Scale = new Vector3(0.1f, 0.1f, 0.1f),
                     FlipUvV = true
                 };
 
