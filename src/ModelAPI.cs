@@ -125,6 +125,7 @@ namespace ULTRADROID.Models
             public Vector3[] Vertices;
             public Vector3[] Normals;
             public Vector2[] UVs;
+            public Color[] Colors;
             public int[] Triangles;
             public Material Material;
         }
@@ -391,12 +392,14 @@ namespace ULTRADROID.Models
             List<Vector3> allVertices = new List<Vector3>();
             List<Vector3> allNormals = new List<Vector3>();
             List<Vector2> allUVs = new List<Vector2>();
+            List<Color> allColors = new List<Color>();
 
             List<int[]> submeshTriangles = new List<int[]>();
             List<Material> submeshMaterials = new List<Material>();
 
             bool allHaveNormals = true;
             bool anyHaveUVs = false;
+            bool anyHaveColors = false;
             int totalVertices = 0;
 
             Material defaultMaterial = null;
@@ -432,6 +435,7 @@ namespace ULTRADROID.Models
 
                 Vector3[] normals = null;
                 Vector2[] uvs = null;
+                Color[] colors = null;
 
                 if (attributes.TryGetProperty(
                         "NORMAL", out JsonElement normalElement))
@@ -453,6 +457,19 @@ namespace ULTRADROID.Models
 
                     if (uvs.Length != vertices.Length)
                         uvs = null;
+                }
+
+                if (attributes.TryGetProperty(
+                        "COLOR_0", out JsonElement colorElement))
+                {
+                    colors = ReadColors(
+                        binary,
+                        views,
+                        accessors,
+                        colorElement.GetInt32());
+
+                    if (colors.Length != vertices.Length)
+                        colors = null;
                 }
 
                 int[] sourceIndices;
@@ -553,6 +570,7 @@ namespace ULTRADROID.Models
                     Vertices = vertices,
                     Normals = normals,
                     UVs = uvs,
+                    Colors = colors,
                     Triangles = triangles,
                     Material = primitiveMaterial
                 };
@@ -560,6 +578,9 @@ namespace ULTRADROID.Models
                 builtPrimitives.Add(data);
 
                 allHaveNormals &= normals != null;
+
+                if (colors != null)
+                    anyHaveColors = true;
 
                 if (uvs != null)
                     anyHaveUVs = true;
@@ -593,6 +614,20 @@ namespace ULTRADROID.Models
                         // Primitives without TEXCOORD_0 receive zero UVs.
                         for (int i = 0; i < primitive.Vertices.Length; i++)
                             allUVs.Add(Vector2.zero);
+                    }
+                }
+
+                if (anyHaveColors)
+                {
+                    if (primitive.Colors != null)
+                    {
+                        allColors.AddRange(primitive.Colors);
+                    }
+                    else
+                    {
+                        // Primitives without COLOR_0 retain material colors.
+                        for (int i = 0; i < primitive.Vertices.Length; i++)
+                            allColors.Add(Color.white);
                     }
                 }
 
@@ -654,6 +689,17 @@ namespace ULTRADROID.Models
                     il2cppUVs.Add(allUVs[i]);
 
                 unityMesh.SetUVs(0, il2cppUVs);
+            }
+
+            if (anyHaveColors && allColors.Count == totalVertices)
+            {
+                Il2CppSystem.Collections.Generic.List<Color> il2cppColors =
+                    new Il2CppSystem.Collections.Generic.List<Color>();
+
+                for (int i = 0; i < allColors.Count; i++)
+                    il2cppColors.Add(allColors[i]);
+
+                unityMesh.SetColors(il2cppColors);
             }
 
             unityMesh.RecalculateBounds();
@@ -1279,6 +1325,104 @@ namespace ULTRADROID.Models
             }
 
             return result;
+        }
+
+        private static Color[] ReadColors(
+            byte[] binary,
+            List<BufferView> views,
+            List<Accessor> accessors,
+            int accessorIndex)
+        {
+            Accessor accessor = GetAccessor(accessors, accessorIndex);
+
+            if (accessor.Type != "VEC3" && accessor.Type != "VEC4")
+                throw new InvalidDataException(
+                    "COLOR_0 must use VEC3 or VEC4.");
+
+            int componentCount = accessor.Type == "VEC3" ? 3 : 4;
+            int componentSize;
+
+            switch (accessor.ComponentType)
+            {
+                case 5126: // FLOAT
+                    componentSize = 4;
+
+                    if (accessor.Normalized)
+                        throw new InvalidDataException(
+                            "FLOAT COLOR_0 cannot be normalized.");
+                    break;
+
+                case 5121: // UNSIGNED_BYTE
+                    componentSize = 1;
+                    if (!accessor.Normalized)
+                        throw new NotSupportedException(
+                            "Integer COLOR_0 must be normalized.");
+                    break;
+
+                case 5123: // UNSIGNED_SHORT
+                    componentSize = 2;
+                    if (!accessor.Normalized)
+                        throw new NotSupportedException(
+                            "Integer COLOR_0 must be normalized.");
+                    break;
+
+                default:
+                    throw new NotSupportedException(
+                        "Unsupported COLOR_0 component type: " +
+                        accessor.ComponentType);
+            }
+
+            int elementSize = componentCount * componentSize;
+
+            byte[] raw = ReadAccessorBytes(
+                binary, views, accessor, elementSize);
+
+            Color[] result = new Color[accessor.Count];
+
+            for (int i = 0; i < result.Length; i++)
+            {
+                int offset = i * elementSize;
+
+                float r = ReadColorComponent(
+                    raw, offset, accessor.ComponentType);
+                float g = ReadColorComponent(
+                    raw, offset + componentSize, accessor.ComponentType);
+                float b = ReadColorComponent(
+                    raw, offset + componentSize * 2, accessor.ComponentType);
+
+                float a = componentCount == 4
+                    ? ReadColorComponent(
+                        raw, offset + componentSize * 3,
+                        accessor.ComponentType)
+                    : 1f;
+
+                result[i] = new Color(r, g, b, a);
+            }
+
+            return result;
+        }
+
+        private static float ReadColorComponent(
+            byte[] raw,
+            int offset,
+            int componentType)
+        {
+            switch (componentType)
+            {
+                case 5126: // FLOAT
+                    return ReadFloat(raw, offset);
+
+                case 5121: // UNSIGNED_BYTE
+                    return raw[offset] / 255f;
+
+                case 5123: // UNSIGNED_SHORT
+                    int value = raw[offset] | (raw[offset + 1] << 8);
+                    return value / 65535f;
+
+                default:
+                    throw new NotSupportedException(
+                        "Unsupported vertex color component type.");
+            }
         }
 
         private static Vector2[] ReadVector2(
