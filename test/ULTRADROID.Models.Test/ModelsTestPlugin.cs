@@ -1,3 +1,4 @@
+
 using System;
 using System.IO;
 using BepInEx;
@@ -282,10 +283,7 @@ namespace ULTRADROID.Models.Test
                     return;
                 }
 
-                animationPlayer =
-                    instance.Root.AddComponent<GlbAnimationPlayer>();
-
-                animationPlayer.Initialize(instance);
+                animationPlayer = GlbAnimationPlayerFactory.Attach(instance);
 
                 if (animationPlayer.Play("Bow"))
                 {
