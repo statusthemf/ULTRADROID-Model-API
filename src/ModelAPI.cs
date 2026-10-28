@@ -124,8 +124,9 @@ namespace ULTRADROID.Models
         {
             public Vector3[] Vertices;
             public Vector3[] Normals;
-            public Vector2[] UVs;
+            public Vector2[][] UVChannels;
             public Color[] Colors;
+            public Vector4[] Tangents;
             public int[] Triangles;
             public Material Material;
         }
@@ -391,15 +392,21 @@ namespace ULTRADROID.Models
 
             List<Vector3> allVertices = new List<Vector3>();
             List<Vector3> allNormals = new List<Vector3>();
-            List<Vector2> allUVs = new List<Vector2>();
+            List<Vector2>[] allUVChannels = new List<Vector2>[8];
             List<Color> allColors = new List<Color>();
+            List<Vector4> allTangents = new List<Vector4>();
+
+            for (int channel = 0; channel < 8; channel++)
+                allUVChannels[channel] = new List<Vector2>();
 
             List<int[]> submeshTriangles = new List<int[]>();
             List<Material> submeshMaterials = new List<Material>();
 
-            bool allHaveNormals = true;
-            bool anyHaveUVs = false;
+            bool[] anyHaveUVChannel = new bool[8];
             bool anyHaveColors = false;
+            bool anyHaveTangents = false;
+            bool allHaveNormals = true;
+            bool allHaveTangents = true;
             int totalVertices = 0;
 
             Material defaultMaterial = null;
@@ -434,8 +441,9 @@ namespace ULTRADROID.Models
                     throw new InvalidDataException("Mesh has no vertices.");
 
                 Vector3[] normals = null;
-                Vector2[] uvs = null;
+                Vector2[][] uvChannels = new Vector2[8][];
                 Color[] colors = null;
+                Vector4[] tangents = null;
 
                 if (attributes.TryGetProperty(
                         "NORMAL", out JsonElement normalElement))
@@ -448,15 +456,26 @@ namespace ULTRADROID.Models
                         normals = null;
                 }
 
-                if (attributes.TryGetProperty(
-                        "TEXCOORD_0", out JsonElement uvElement))
+                for (int channel = 0; channel < 8; channel++)
                 {
-                    uvs = ReadVector2(
-                        binary, views, accessors,
-                        uvElement.GetInt32(), options.FlipUvV);
+                    string attributeName = "TEXCOORD_" + channel;
 
-                    if (uvs.Length != vertices.Length)
-                        uvs = null;
+                    if (!attributes.TryGetProperty(
+                            attributeName, out JsonElement uvElement))
+                        continue;
+
+                    uvChannels[channel] = ReadVector2(
+                        binary,
+                        views,
+                        accessors,
+                        uvElement.GetInt32(),
+                        options.FlipUvV);
+
+                    if (uvChannels[channel].Length != vertices.Length)
+                        uvChannels[channel] = null;
+
+                    if (uvChannels[channel] != null)
+                        anyHaveUVChannel[channel] = true;
                 }
 
                 if (attributes.TryGetProperty(
@@ -470,6 +489,19 @@ namespace ULTRADROID.Models
 
                     if (colors.Length != vertices.Length)
                         colors = null;
+                }
+
+                if (attributes.TryGetProperty(
+                        "TANGENT", out JsonElement tangentElement))
+                {
+                    tangents = ReadTangents(
+                        binary,
+                        views,
+                        accessors,
+                        tangentElement.GetInt32());
+
+                    if (tangents.Length != vertices.Length)
+                        tangents = null;
                 }
 
                 int[] sourceIndices;
@@ -569,8 +601,9 @@ namespace ULTRADROID.Models
                 {
                     Vertices = vertices,
                     Normals = normals,
-                    UVs = uvs,
+                    UVChannels = uvChannels,
                     Colors = colors,
+                    Tangents = tangents,
                     Triangles = triangles,
                     Material = primitiveMaterial
                 };
@@ -582,8 +615,10 @@ namespace ULTRADROID.Models
                 if (colors != null)
                     anyHaveColors = true;
 
-                if (uvs != null)
-                    anyHaveUVs = true;
+                if (tangents != null)
+                    anyHaveTangents = true;
+
+                allHaveTangents &= tangents != null;
 
                 totalVertices = checked(totalVertices + vertices.Length);
             }
@@ -603,17 +638,21 @@ namespace ULTRADROID.Models
                     allNormals.AddRange(primitive.Normals);
                 }
 
-                if (anyHaveUVs)
+                for (int channel = 0; channel < 8; channel++)
                 {
-                    if (primitive.UVs != null)
+                    if (!anyHaveUVChannel[channel])
+                        continue;
+
+                    Vector2[] channelUVs = primitive.UVChannels[channel];
+
+                    if (channelUVs != null)
                     {
-                        allUVs.AddRange(primitive.UVs);
+                        allUVChannels[channel].AddRange(channelUVs);
                     }
                     else
                     {
-                        // Primitives without TEXCOORD_0 receive zero UVs.
                         for (int i = 0; i < primitive.Vertices.Length; i++)
-                            allUVs.Add(Vector2.zero);
+                            allUVChannels[channel].Add(Vector2.zero);
                     }
                 }
 
@@ -630,6 +669,9 @@ namespace ULTRADROID.Models
                             allColors.Add(Color.white);
                     }
                 }
+
+                if (anyHaveTangents && allHaveTangents)
+                    allTangents.AddRange(primitive.Tangents);
 
                 int[] adjustedTriangles =
                     new int[primitive.Triangles.Length];
@@ -680,15 +722,19 @@ namespace ULTRADROID.Models
                 unityMesh.RecalculateNormals();
             }
 
-            if (anyHaveUVs && allUVs.Count == totalVertices)
+            for (int channel = 0; channel < 8; channel++)
             {
+                if (!anyHaveUVChannel[channel] ||
+                    allUVChannels[channel].Count != totalVertices)
+                    continue;
+
                 Il2CppSystem.Collections.Generic.List<Vector2> il2cppUVs =
                     new Il2CppSystem.Collections.Generic.List<Vector2>();
 
-                for (int i = 0; i < allUVs.Count; i++)
-                    il2cppUVs.Add(allUVs[i]);
+                for (int i = 0; i < allUVChannels[channel].Count; i++)
+                    il2cppUVs.Add(allUVChannels[channel][i]);
 
-                unityMesh.SetUVs(0, il2cppUVs);
+                unityMesh.SetUVs(channel, il2cppUVs);
             }
 
             if (anyHaveColors && allColors.Count == totalVertices)
@@ -700,6 +746,24 @@ namespace ULTRADROID.Models
                     il2cppColors.Add(allColors[i]);
 
                 unityMesh.SetColors(il2cppColors);
+            }
+
+            if (anyHaveTangents && allHaveTangents &&
+                allTangents.Count == totalVertices)
+            {
+                Il2CppSystem.Collections.Generic.List<Vector4> il2cppTangents =
+                    new Il2CppSystem.Collections.Generic.List<Vector4>();
+
+                for (int i = 0; i < allTangents.Count; i++)
+                    il2cppTangents.Add(allTangents[i]);
+
+                unityMesh.SetTangents(il2cppTangents);
+            }
+            else if (anyHaveUVChannel[0] &&
+                     allUVChannels[0].Count == totalVertices)
+            {
+                // Generate tangents when imported tangents are absent or incomplete.
+                unityMesh.RecalculateTangents();
             }
 
             unityMesh.RecalculateBounds();
@@ -725,7 +789,11 @@ namespace ULTRADROID.Models
                 "[ULTRADROID Models API] Built mesh '" + meshName +
                 "': vertices=" + totalVertices +
                 ", submeshes=" + builtPrimitives.Count +
-                ", materials=" + submeshMaterials.Count);
+                ", materials=" + submeshMaterials.Count +
+                ", colors=" + anyHaveColors +
+                ", tangents=" + anyHaveTangents +
+                ", UV channels=" + Array.FindAll(
+                    anyHaveUVChannel, channel => channel).Length);
         }
 
         private static Material CreateDefaultMaterial()
@@ -1327,6 +1395,41 @@ namespace ULTRADROID.Models
             return result;
         }
 
+        private static Vector4[] ReadTangents(
+            byte[] binary,
+            List<BufferView> views,
+            List<Accessor> accessors,
+            int accessorIndex)
+        {
+            Accessor accessor = GetAccessor(accessors, accessorIndex);
+
+            if (accessor.Type != "VEC4" ||
+                accessor.ComponentType != 5126 ||
+                accessor.Normalized)
+            {
+                throw new NotSupportedException(
+                    "TANGENT must use non-normalized FLOAT VEC4.");
+            }
+
+            byte[] raw = ReadAccessorBytes(
+                binary, views, accessor, 16);
+
+            Vector4[] result = new Vector4[accessor.Count];
+
+            for (int i = 0; i < result.Length; i++)
+            {
+                int offset = i * 16;
+
+                result[i] = new Vector4(
+                    ReadFloat(raw, offset),
+                    ReadFloat(raw, offset + 4),
+                    ReadFloat(raw, offset + 8),
+                    ReadFloat(raw, offset + 12));
+            }
+
+            return result;
+        }
+
         private static Color[] ReadColors(
             byte[] binary,
             List<BufferView> views,
@@ -1434,9 +1537,13 @@ namespace ULTRADROID.Models
         {
             Accessor accessor = GetAccessor(accessors, accessorIndex);
 
-            if (accessor.Type != "VEC2" || accessor.ComponentType != 5126)
+            if (accessor.Type != "VEC2" ||
+                accessor.ComponentType != 5126 ||
+                accessor.Normalized)
+            {
                 throw new NotSupportedException(
-                    "TEXCOORD_0 must currently use FLOAT components.");
+                    "Texture coordinates must use non-normalized FLOAT VEC2.");
+            }
 
             byte[] raw = ReadAccessorBytes(binary, views, accessor, 8);
             Vector2[] result = new Vector2[accessor.Count];
