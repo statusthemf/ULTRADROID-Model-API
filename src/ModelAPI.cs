@@ -763,15 +763,74 @@ namespace ULTRADROID.Models
                     SetMaterialColor(
                         material, "_BaseColor", "_Color", baseColor);
 
-                    float metallic = GetFloat(pbr, "metallicFactor", 1f);
-                    float roughness = GetFloat(pbr, "roughnessFactor", 1f);
+                    float metallic = Mathf.Clamp01(
+                        GetFloat(pbr, "metallicFactor", 1f));
 
-                    if (material.HasProperty("_Metallic"))
-                        material.SetFloat("_Metallic", metallic);
-                    if (material.HasProperty("_Smoothness"))
-                        material.SetFloat("_Smoothness", 1f - roughness);
-                    if (material.HasProperty("_Glossiness"))
-                        material.SetFloat("_Glossiness", 1f - roughness);
+                    float roughness = Mathf.Clamp01(
+                        GetFloat(pbr, "roughnessFactor", 1f));
+
+                    bool packedMetallicRoughness = false;
+
+                    if (loadTextures &&
+                        pbr.TryGetProperty(
+                            "metallicRoughnessTexture",
+                            out JsonElement metallicRoughnessInfo))
+                    {
+                        Texture2D source = ResolveTexture(
+                            metallicRoughnessInfo, images, textures);
+
+                        if (source != null &&
+                            material.HasProperty("_MetallicGlossMap"))
+                        {
+                            Texture2D packed = PackMetallicRoughness(
+                                source, metallic, roughness);
+
+                            material.SetTexture("_MetallicGlossMap", packed);
+
+                            // URP Lit and the Built-in Standard shader use
+                            // different keywords for metallic-gloss maps.
+                            if (material.shader != null &&
+                                material.shader.name.StartsWith(
+                                    "Universal Render Pipeline/",
+                                    StringComparison.Ordinal))
+                            {
+                                material.EnableKeyword("_METALLICSPECGLOSSMAP");
+                                material.DisableKeyword("_METALLICGLOSSMAP");
+                            }
+                            else
+                            {
+                                material.EnableKeyword("_METALLICGLOSSMAP");
+                                material.DisableKeyword("_METALLICSPECGLOSSMAP");
+                            }
+
+                            // The scalar factors are already baked into the map.
+                            // Avoid applying them a second time.
+                            if (material.HasProperty("_Metallic"))
+                                material.SetFloat("_Metallic", 1f);
+
+                            if (material.HasProperty("_Smoothness"))
+                                material.SetFloat("_Smoothness", 1f);
+
+                            if (material.HasProperty("_Glossiness"))
+                                material.SetFloat("_Glossiness", 1f);
+
+                            packedMetallicRoughness = true;
+                        }
+                    }
+
+                    // If the texture is absent or the shader cannot use it,
+                    // preserve the glTF scalar factors as the fallback.
+                    if (!packedMetallicRoughness)
+                    {
+                        if (material.HasProperty("_Metallic"))
+                            material.SetFloat("_Metallic", metallic);
+
+                        if (material.HasProperty("_Smoothness"))
+                            material.SetFloat("_Smoothness", 1f - roughness);
+
+                        if (material.HasProperty("_Glossiness"))
+                            material.SetFloat("_Glossiness", 1f - roughness);
+                    }
 
                     if (loadTextures && pbr.TryGetProperty(
                             "baseColorTexture", out JsonElement baseTextureInfo))
@@ -780,24 +839,6 @@ namespace ULTRADROID.Models
                             baseTextureInfo, images, textures);
                         SetMaterialTexture(
                             material, "_BaseMap", "_MainTex", baseTexture);
-                    }
-
-                    if (loadTextures && pbr.TryGetProperty(
-                            "metallicRoughnessTexture",
-                            out JsonElement metallicRoughnessInfo))
-                    {
-                        Texture2D source = ResolveTexture(
-                            metallicRoughnessInfo, images, textures);
-
-                        if (source != null)
-                        {
-                            Texture2D packed = PackMetallicRoughness(source);
-                            if (material.HasProperty("_MetallicGlossMap"))
-                            {
-                                material.SetTexture("_MetallicGlossMap", packed);
-                                material.EnableKeyword("_METALLICGLOSSMAP");
-                            }
-                        }
                     }
                 }
 
@@ -909,25 +950,58 @@ namespace ULTRADROID.Models
                 material.SetTexture(fallbackProperty, texture);
         }
 
-        private static Texture2D PackMetallicRoughness(Texture2D source)
+        private static Texture2D PackMetallicRoughness(
+            Texture2D source,
+            float metallicFactor,
+            float roughnessFactor)
         {
             Color[] pixels = source.GetPixels();
+
+            metallicFactor = Mathf.Clamp01(metallicFactor);
+            roughnessFactor = Mathf.Clamp01(roughnessFactor);
+
             for (int i = 0; i < pixels.Length; i++)
             {
                 Color pixel = pixels[i];
-                // glTF stores metallic in blue and roughness in green.
-                // Unity Standard uses red for metallic and alpha for smoothness.
-                pixels[i] = new Color(pixel.b, 0f, 0f, 1f - pixel.g);
+
+                // glTF metallic-roughness texture:
+                //   Green = roughness
+                //   Blue  = metallic
+                //
+                // Unity metallic-gloss map:
+                //   Red   = metallic
+                //   Alpha = smoothness
+
+                float metallic = Mathf.Clamp01(
+                    pixel.b * metallicFactor);
+
+                float roughness = Mathf.Clamp01(
+                    pixel.g * roughnessFactor);
+
+                float smoothness = 1f - roughness;
+
+                pixels[i] = new Color(
+                    metallic,
+                    0f,
+                    0f,
+                    smoothness);
             }
 
             Texture2D packed = new Texture2D(
-                source.width, source.height, TextureFormat.RGBA32, true);
+                source.width,
+                source.height,
+                TextureFormat.RGBA32,
+                true);
+
             packed.name = source.name + "_MetallicSmoothness";
+
             packed.SetPixels(pixels);
             packed.Apply(true, false);
+
             packed.wrapMode = source.wrapMode;
             packed.filterMode = source.filterMode;
             packed.anisoLevel = source.anisoLevel;
+
             return packed;
         }
 
