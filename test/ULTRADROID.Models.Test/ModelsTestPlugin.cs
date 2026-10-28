@@ -27,42 +27,22 @@ namespace ULTRADROID.Models.Test
         {
             Log = base.Log;
 
-            Log.LogInfo("========================================");
-            Log.LogInfo("ULTRADROID Models Test 0.3.1 starting.");
-            Log.LogInfo($"Models API version: {ModelAPI.Version}");
-            Log.LogInfo($"Model path: {ModelPath}");
-            Log.LogInfo($"Model file exists: {File.Exists(ModelPath)}");
-
-            if (File.Exists(ModelPath))
-            {
-                Log.LogInfo(
-                    $"Model file size: {new FileInfo(ModelPath).Length} bytes.");
-            }
-
             try
             {
                 ClassInjector.RegisterTypeInIl2Cpp<ModelTestLoader>();
-
                 AddComponent<ModelTestLoader>();
-
-                Log.LogInfo("Diagnostic runtime component registered.");
-                Log.LogInfo("Waiting for scene diagnostics...");
             }
             catch (Exception ex)
             {
                 Log.LogError($"Failed to initialize runtime: {ex}");
             }
-
-            Log.LogInfo("========================================");
         }
     }
 
     public class ModelTestLoader : MonoBehaviour
     {
-        private float nextDiagnosticTime;
         private float nextModelAttemptTime;
 
-        private string lastSceneName = string.Empty;
         private string detectedGameplayScene = "";
 
         private bool gameplayDetected;
@@ -75,66 +55,20 @@ namespace ULTRADROID.Models.Test
         {
         }
 
-        private void Awake()
-        {
-            ModelsTestPlugin.Log.LogInfo(
-                "[Runtime] Awake called. Component is alive.");
-        }
-        
-        private void OnEnable()
-        {
-            ModelsTestPlugin.Log.LogInfo(
-                "[Runtime] OnEnable called.");
-                
-            LogCurrentScenes("OnEnable");
-            }
-
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
-        {
-            try
-            {
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[SceneEvent] Scene loaded: '{scene.name}', " +
-                    $"mode={mode}, loaded={scene.isLoaded}");
-
-                if (IsPlayableSceneName(scene.name))
-                    OnGameplaySceneDetected(scene.name);
-            }
-            catch (Exception ex)
-            {
-                ModelsTestPlugin.Log.LogError(
-                    $"[SceneEvent] Error: {ex}");
-            }
-        }
-
         public void Update()
         {
             try
             {
                 Scene active = SceneManager.GetActiveScene();
-                string activeName = active.IsValid() ? active.name : "";
-
-                if (!string.Equals(
-                    activeName, lastSceneName, StringComparison.Ordinal))
-                {
-                    ModelsTestPlugin.Log.LogInfo(
-                        $"[ScenePoll] Active scene changed: " +
-                        $"'{lastSceneName}' -> '{activeName}'");
-
-                    lastSceneName = activeName;
-                }
-
                 string candidate = null;
 
-                // Check the active scene first.
                 if (active.IsValid() && active.isLoaded &&
-                    IsPlayableSceneName(activeName))
+                    IsPlayableSceneName(active.name))
                 {
-                    candidate = activeName;
+                    candidate = active.name;
                 }
                 else
                 {
-                    // Gameplay may be loaded additively.
                     for (int i = 0; i < SceneManager.sceneCount; i++)
                     {
                         Scene scene = SceneManager.GetSceneAt(i);
@@ -149,15 +83,7 @@ namespace ULTRADROID.Models.Test
                 }
 
                 if (candidate == null)
-                {
-                    if (Time.unscaledTime >= nextDiagnosticTime)
-                    {
-                        nextDiagnosticTime = Time.unscaledTime + 3f;
-                        LogCurrentScenes("Polling");
-                    }
-
                     return;
-                }
 
                 if (!gameplayDetected ||
                     !string.Equals(
@@ -166,13 +92,6 @@ namespace ULTRADROID.Models.Test
                         StringComparison.OrdinalIgnoreCase))
                 {
                     OnGameplaySceneDetected(candidate);
-                }
-
-                if (Time.unscaledTime >= nextDiagnosticTime)
-                {
-                    nextDiagnosticTime = Time.unscaledTime + 3f;
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[Heartbeat] ModelTestLoader.Update IS RUNNING.");
                 }
 
                 if (modelLoadAttempted ||
@@ -184,70 +103,10 @@ namespace ULTRADROID.Models.Test
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogError(
-                    $"[Runtime] Update exception: {ex}");
+                    "[Models Test] Runtime error: " + ex.Message);
             }
         }
 
-        private void LogCurrentScenes(string source)
-        {
-            try
-            {
-                Scene active = SceneManager.GetActiveScene();
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Scene:{source}] Active='{active.name}', " +
-                    $"valid={active.IsValid()}, loaded={active.isLoaded}, " +
-                    $"sceneCount={SceneManager.sceneCount}");
-
-                for (int i = 0; i < SceneManager.sceneCount; i++)
-                {
-                    Scene scene = SceneManager.GetSceneAt(i);
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        $"[Scene:{source}] [{i}] '{scene.name}', " +
-                        $"valid={scene.IsValid()}, loaded={scene.isLoaded}");
-                }
-            }
-            catch (Exception ex)
-            {
-                ModelsTestPlugin.Log.LogError(
-                    $"[Scene:{source}] Scene inspection failed: {ex}");
-            }
-        }
-
-        private void DiagnoseActiveScene()
-        {
-            Scene active = SceneManager.GetActiveScene();
-
-            string activeName = active.IsValid()
-                ? active.name
-                : "<invalid>";
-
-            if (activeName != lastSceneName)
-            {
-                lastSceneName = activeName;
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[ScenePoll] Active scene changed: '{activeName}'");
-            }
-
-            if (IsPlayableSceneName(activeName))
-                OnGameplaySceneDetected(activeName);
-
-            // Also search loaded scenes in case gameplay is additive.
-            for (int i = 0; i < SceneManager.sceneCount; i++)
-            {
-                Scene scene = SceneManager.GetSceneAt(i);
-
-                if (scene.IsValid() &&
-                    scene.isLoaded &&
-                    IsPlayableSceneName(scene.name))
-                {
-                    OnGameplaySceneDetected(scene.name);
-                    break;
-                }
-            }
-        }
 
         private bool IsPlayableSceneName(string sceneName)
         {
@@ -291,9 +150,6 @@ namespace ULTRADROID.Models.Test
                     StringComparison.OrdinalIgnoreCase))
                 return;
 
-            ModelsTestPlugin.Log.LogInfo(
-                $"[Gameplay] Recognized candidate scene: '{sceneName}'");
-
             detectedGameplayScene = sceneName;
             gameplayDetected = true;
             modelLoadAttempted = false;
@@ -303,9 +159,6 @@ namespace ULTRADROID.Models.Test
 
             currentCamera = null;
             DestroyCurrentModel();
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[Gameplay] Model load scheduled in two seconds.");
         }
 
         private static bool IsNonGameplayScene(string sceneName)
@@ -331,27 +184,14 @@ namespace ULTRADROID.Models.Test
             Camera main = Camera.main;
 
             if (main != null && main.isActiveAndEnabled)
-            {
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Camera] Camera.main='{main.name}'");
-
                 return main;
-            }
 
             Camera[] cameras = FindObjectsOfType<Camera>();
-
-            ModelsTestPlugin.Log.LogInfo(
-                $"[Camera] Found {cameras.Length} camera(s).");
 
             foreach (Camera camera in cameras)
             {
                 if (camera == null || !camera.isActiveAndEnabled)
                     continue;
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Camera] Candidate='{camera.name}', " +
-                    $"tag='{camera.tag}', " +
-                    $"position={camera.transform.position}");
 
                 if (camera.CompareTag("MainCamera"))
                     return camera;
@@ -368,9 +208,6 @@ namespace ULTRADROID.Models.Test
 
         private void TryLoadModel()
         {
-            ModelsTestPlugin.Log.LogInfo(
-                $"[Model] Attempting load in '{detectedGameplayScene}'.");
-
             if (!File.Exists(ModelsTestPlugin.ModelPath))
             {
                 modelLoadAttempted = true;
@@ -396,9 +233,6 @@ namespace ULTRADROID.Models.Test
 
             try
             {
-                ModelsTestPlugin.Log.LogInfo(
-                    "[Model] Calling ModelAPI.LoadGLB...");
-
                 ModelLoadOptions options = new ModelLoadOptions
                 {
                     Name = "BladesOfChaosTest",
@@ -421,19 +255,7 @@ namespace ULTRADROID.Models.Test
                     return;
                 }
 
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] LOAD SUCCESS: '{instance.Root.name}'");
 
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Camera='{currentCamera.name}', " +
-                    $"position={currentCamera.transform.position}");
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Model] Root local position=" +
-                    $"{instance.Root.transform.localPosition}, " +
-                    $"scale={instance.Root.transform.localScale}");
-
-                LogModelRenderers(instance.Root);
             }
             catch (Exception ex)
             {
@@ -442,128 +264,6 @@ namespace ULTRADROID.Models.Test
             }
         }
 
-        private void LogModelRenderers(GameObject root)
-        {
-            Renderer[] renderers =
-                root.GetComponentsInChildren<Renderer>(true);
-
-            MeshFilter[] filters =
-                root.GetComponentsInChildren<MeshFilter>(true);
-
-            ModelsTestPlugin.Log.LogInfo(
-                $"[Model] Renderers={renderers.Length}, " +
-                $"MeshFilters={filters.Length}");
-
-            foreach (Renderer renderer in renderers)
-            {
-                if (renderer == null)
-                    continue;
-
-                ModelsTestPlugin.Log.LogInfo(
-                    $"[Renderer] '{renderer.name}', " +
-                    $"enabled={renderer.enabled}, " +
-                    $"active={renderer.gameObject.activeInHierarchy}, " +
-                    $"bounds={renderer.bounds}");
-
-                // Inspect the actual runtime materials.
-                try
-                {
-                    Material[] materials = renderer.sharedMaterials;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        $"[MaterialDiag] Renderer='{renderer.name}', " +
-                        $"materialCount={materials.Length}");
-
-                    for (int i = 0; i < materials.Length; i++)
-                    {
-                        Material mat = materials[i];
-
-                        if (mat == null)
-                        {
-                            ModelsTestPlugin.Log.LogError(
-                                $"[MaterialDiag] Material[{i}] is NULL.");
-                            continue;
-                        }
-
-                        Shader shader = mat.shader;
-
-                        ModelsTestPlugin.Log.LogInfo(
-                            $"[MaterialDiag] Material[{i}]" +
-                            $" name='{mat.name}'" +
-                            $" shader='{(shader != null ? shader.name : "<NULL>")}'" +
-                            $" shaderSupported={(shader != null && shader.isSupported)}" +
-                            $" renderQueue={mat.renderQueue}" +
-                            $" color={mat.HasProperty("_Color")}" +
-                            $" baseColor={mat.HasProperty("_BaseColor")}" +
-                            $" mainTex={mat.HasProperty("_MainTex")}" +
-                            $" baseMap={mat.HasProperty("_BaseMap")}" +
-                            $" normalMap={mat.HasProperty("_BumpMap")}" +
-                            $" metallicMap={mat.HasProperty("_MetallicGlossMap")}");
-
-                        if (mat.HasProperty("_Color"))
-                        {
-                            ModelsTestPlugin.Log.LogInfo(
-                                $"[MaterialDiag] _Color={mat.color}");
-                        }
-
-                        if (mat.HasProperty("_BaseColor"))
-                        {
-                            ModelsTestPlugin.Log.LogInfo(
-                                $"[MaterialDiag] _BaseColor=" +
-                                $"{mat.GetColor("_BaseColor")}");
-                        }
-
-                        if (mat.HasProperty("_MainTex"))
-                        {
-                            Texture tex = mat.GetTexture("_MainTex");
-
-                            ModelsTestPlugin.Log.LogInfo(
-                                $"[MaterialDiag] _MainTex=" +
-                                $"{(tex != null ? tex.name : "<NULL>")}");
-                        }
-
-                        if (mat.HasProperty("_BaseMap"))
-                        {
-                            Texture tex = mat.GetTexture("_BaseMap");
-
-                            ModelsTestPlugin.Log.LogInfo(
-                                $"[MaterialDiag] _BaseMap=" +
-                                $"{(tex != null ? tex.name : "<NULL>")}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ModelsTestPlugin.Log.LogError(
-                        $"[MaterialDiag] Inspection failed: {ex}");
-                }
-            }
-
-            foreach (MeshFilter filter in filters)
-            {
-                if (filter == null)
-                    continue;
-
-                Mesh mesh = filter.sharedMesh;
-
-                ModelsTestPlugin.Log.LogInfo(
-                    mesh == null
-                        ? $"[Mesh] '{filter.name}' has NO mesh."
-                        : $"[Mesh] '{filter.name}', " +
-                          $"vertices={mesh.vertexCount}, " +
-                          $"submeshes={mesh.subMeshCount}, " +
-                          $"normals={mesh.normals.Length}, " +
-                          $"tangents={mesh.tangents.Length}, " +
-                          $"uv={mesh.uv.Length}, " +
-                          $"triangles={mesh.triangles.Length}");
-            }
-        }
-        
-        private void OnDisable()
-        {
-            ModelsTestPlugin.Log.LogInfo(
-                "[Runtime] OnDisable called.");
-        }
 
         private void OnDestroy()
         {
