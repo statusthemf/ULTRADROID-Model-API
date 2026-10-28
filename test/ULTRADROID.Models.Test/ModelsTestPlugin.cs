@@ -403,7 +403,7 @@ namespace ULTRADROID.Models.Test
                 {
                     Name = "BladesOfChaosTest",
                     Parent = currentCamera.transform,
-                    Position = new Vector3(0f, -0.5f, 2f),
+                    Position = new Vector3(0f, -1f, 2f),
                     RotationEuler = Vector3.zero,
                     Scale = new Vector3(0.05f, 0.05f, 0.05f),
                     FlipUvV = true
