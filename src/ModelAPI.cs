@@ -528,42 +528,72 @@ namespace ULTRADROID.Models
 
         private static Material CreateDefaultMaterial()
         {
-            bool hasScriptablePipeline =
-                GraphicsSettings.currentRenderPipeline != null;
-
             Shader shader = null;
 
-            if (hasScriptablePipeline)
+            // Prefer the Built-in Render Pipeline shader.
+            try
             {
-                // Prefer shaders intended for Scriptable Render Pipelines.
-                shader = Shader.Find("Universal Render Pipeline/Lit");
-
-                if (shader == null || !shader.isSupported)
-                    shader = Shader.Find("HDRP/Lit");
-            }
-            else
-            {
-                // Unity Built-in Render Pipeline.
-                shader = Shader.Find("Standard");
-            }
-
-            // Use other lit shaders as fallbacks before considering unlit ones.
-            if (shader == null || !shader.isSupported)
                 shader = Shader.Find("Standard");
 
-            if (shader == null || !shader.isSupported)
-                shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader != null && !shader.isSupported)
+                    shader = null;
+            }
+            catch (Exception)
+            {
+                shader = null;
+            }
 
-            if (shader == null || !shader.isSupported)
-                shader = Shader.Find("Unlit/Texture");
+            // Try URP Lit if Standard is unavailable.
+            if (shader == null)
+            {
+                try
+                {
+                    shader = Shader.Find("Universal Render Pipeline/Lit");
 
-            if (shader == null || !shader.isSupported)
-                shader = Shader.Find("Unlit/Color");
+                    if (shader != null && !shader.isSupported)
+                        shader = null;
+                }
+                catch (Exception)
+                {
+                    shader = null;
+                }
+            }
 
-            if (shader == null || !shader.isSupported)
+            // Final fallbacks.
+            if (shader == null)
+            {
+                try
+                {
+                    shader = Shader.Find("Unlit/Texture");
+
+                    if (shader != null && !shader.isSupported)
+                        shader = null;
+                }
+                catch (Exception)
+                {
+                    shader = null;
+                }
+            }
+
+            if (shader == null)
+            {
+                try
+                {
+                    shader = Shader.Find("Unlit/Color");
+
+                    if (shader != null && !shader.isSupported)
+                        shader = null;
+                }
+                catch (Exception)
+                {
+                    shader = null;
+                }
+            }
+
+            if (shader == null)
             {
                 throw new NotSupportedException(
-                    "No supported Unity shader was found for the imported model.");
+                    "No supported Unity shader was found.");
             }
 
             Material material = new Material(shader);
@@ -575,10 +605,7 @@ namespace ULTRADROID.Models
                 material.SetColor("_Color", Color.white);
 
             Debug.Log(
-                "[ULTRADROID Models API] Created material using shader: " +
-                shader.name +
-                " | Pipeline: " +
-                (hasScriptablePipeline ? "Scriptable" : "Built-in"));
+                "[ULTRADROID Models API] Selected shader: " + shader.name);
 
             return material;
         }
