@@ -464,6 +464,79 @@ namespace ULTRADROID.Models.Test
                     $"enabled={renderer.enabled}, " +
                     $"active={renderer.gameObject.activeInHierarchy}, " +
                     $"bounds={renderer.bounds}");
+
+                // Inspect the actual runtime materials.
+                try
+                {
+                    Material[] materials = renderer.sharedMaterials;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        $"[MaterialDiag] Renderer='{renderer.name}', " +
+                        $"materialCount={materials.Length}");
+
+                    for (int i = 0; i < materials.Length; i++)
+                    {
+                        Material mat = materials[i];
+
+                        if (mat == null)
+                        {
+                            ModelsTestPlugin.Log.LogError(
+                                $"[MaterialDiag] Material[{i}] is NULL.");
+                            continue;
+                        }
+
+                        Shader shader = mat.shader;
+
+                        ModelsTestPlugin.Log.LogInfo(
+                            $"[MaterialDiag] Material[{i}]" +
+                            $" name='{mat.name}'" +
+                            $" shader='{(shader != null ? shader.name : "<NULL>")}'" +
+                            $" shaderSupported={(shader != null && shader.isSupported)}" +
+                            $" renderQueue={mat.renderQueue}" +
+                            $" color={mat.HasProperty("_Color")}" +
+                            $" baseColor={mat.HasProperty("_BaseColor")}" +
+                            $" mainTex={mat.HasProperty("_MainTex")}" +
+                            $" baseMap={mat.HasProperty("_BaseMap")}" +
+                            $" normalMap={mat.HasProperty("_BumpMap")}" +
+                            $" metallicMap={mat.HasProperty("_MetallicGlossMap")}");
+
+                        if (mat.HasProperty("_Color"))
+                        {
+                            ModelsTestPlugin.Log.LogInfo(
+                                $"[MaterialDiag] _Color={mat.color}");
+                        }
+
+                        if (mat.HasProperty("_BaseColor"))
+                        {
+                            ModelsTestPlugin.Log.LogInfo(
+                                $"[MaterialDiag] _BaseColor=" +
+                                $"{mat.GetColor("_BaseColor")}");
+                        }
+
+                        if (mat.HasProperty("_MainTex"))
+                        {
+                            Texture tex = mat.GetTexture("_MainTex");
+
+                            ModelsTestPlugin.Log.LogInfo(
+                                $"[MaterialDiag] _MainTex=" +
+                                $"{(tex != null ? tex.name : "<NULL>")}");
+                        }
+
+                        if (mat.HasProperty("_BaseMap"))
+                        {
+                            Texture tex = mat.GetTexture("_BaseMap");
+
+                            ModelsTestPlugin.Log.LogInfo(
+                                $"[MaterialDiag] _BaseMap=" +
+                                $"{(tex != null ? tex.name : "<NULL>")}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ModelsTestPlugin.Log.LogError(
+                        $"[MaterialDiag] Inspection failed: {ex}");
+                }
             }
 
             foreach (MeshFilter filter in filters)
@@ -478,7 +551,11 @@ namespace ULTRADROID.Models.Test
                         ? $"[Mesh] '{filter.name}' has NO mesh."
                         : $"[Mesh] '{filter.name}', " +
                           $"vertices={mesh.vertexCount}, " +
-                          $"submeshes={mesh.subMeshCount}");
+                          $"submeshes={mesh.subMeshCount}, " +
+                          $"normals={mesh.normals.Length}, " +
+                          $"tangents={mesh.tangents.Length}, " +
+                          $"uv={mesh.uv.Length}, " +
+                          $"triangles={mesh.triangles.Length}");
             }
         }
         
