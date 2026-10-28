@@ -1395,41 +1395,6 @@ namespace ULTRADROID.Models
             return result;
         }
 
-        private static Vector4[] ReadTangents(
-            byte[] binary,
-            List<BufferView> views,
-            List<Accessor> accessors,
-            int accessorIndex)
-        {
-            Accessor accessor = GetAccessor(accessors, accessorIndex);
-
-            if (accessor.Type != "VEC4" ||
-                accessor.ComponentType != 5126 ||
-                accessor.Normalized)
-            {
-                throw new NotSupportedException(
-                    "TANGENT must use non-normalized FLOAT VEC4.");
-            }
-
-            byte[] raw = ReadAccessorBytes(
-                binary, views, accessor, 16);
-
-            Vector4[] result = new Vector4[accessor.Count];
-
-            for (int i = 0; i < result.Length; i++)
-            {
-                int offset = i * 16;
-
-                result[i] = new Vector4(
-                    ReadFloat(raw, offset),
-                    ReadFloat(raw, offset + 4),
-                    ReadFloat(raw, offset + 8),
-                    ReadFloat(raw, offset + 12));
-            }
-
-            return result;
-        }
-
         private static Color[] ReadColors(
             byte[] binary,
             List<BufferView> views,
@@ -1537,27 +1502,89 @@ namespace ULTRADROID.Models
         {
             Accessor accessor = GetAccessor(accessors, accessorIndex);
 
-            if (accessor.Type != "VEC2" ||
-                accessor.ComponentType != 5126 ||
-                accessor.Normalized)
+            if (accessor.Type != "VEC2")
+                throw new InvalidDataException(
+                    "Texture coordinates must use VEC2.");
+
+            int componentSize;
+
+            switch (accessor.ComponentType)
             {
-                throw new NotSupportedException(
-                    "Texture coordinates must use non-normalized FLOAT VEC2.");
+                case 5126: // FLOAT
+                    componentSize = 4;
+
+                    if (accessor.Normalized)
+                        throw new InvalidDataException(
+                            "FLOAT texture coordinates cannot be normalized.");
+                    break;
+
+                case 5121: // UNSIGNED_BYTE
+                    componentSize = 1;
+
+                    if (!accessor.Normalized)
+                        throw new NotSupportedException(
+                            "Integer texture coordinates must be normalized.");
+                    break;
+
+                case 5123: // UNSIGNED_SHORT
+                    componentSize = 2;
+
+                    if (!accessor.Normalized)
+                        throw new NotSupportedException(
+                            "Integer texture coordinates must be normalized.");
+                    break;
+
+                default:
+                    throw new NotSupportedException(
+                        "Unsupported texture coordinate component type: " +
+                        accessor.ComponentType);
             }
 
-            byte[] raw = ReadAccessorBytes(binary, views, accessor, 8);
+            int elementSize = componentSize * 2;
+
+            byte[] raw = ReadAccessorBytes(
+                binary, views, accessor, elementSize);
+
             Vector2[] result = new Vector2[accessor.Count];
 
             for (int i = 0; i < result.Length; i++)
             {
-                int offset = i * 8;
-                float u = ReadFloat(raw, offset);
-                float v = ReadFloat(raw, offset + 4);
+                int offset = i * elementSize;
 
-                result[i] = new Vector2(u, flipV ? 1f - v : v);
+                float u = ReadUVComponent(
+                    raw, offset, accessor.ComponentType);
+
+                float v = ReadUVComponent(
+                    raw, offset + componentSize, accessor.ComponentType);
+
+                result[i] = new Vector2(
+                    u, flipV ? 1f - v : v);
             }
 
             return result;
+        }
+
+        private static float ReadUVComponent(
+            byte[] raw,
+            int offset,
+            int componentType)
+        {
+            switch (componentType)
+            {
+                case 5126: // FLOAT
+                    return ReadFloat(raw, offset);
+
+                case 5121: // UNSIGNED_BYTE
+                    return raw[offset] / 255f;
+
+                case 5123: // UNSIGNED_SHORT
+                    int value = raw[offset] | (raw[offset + 1] << 8);
+                    return value / 65535f;
+
+                default:
+                    throw new NotSupportedException(
+                        "Unsupported UV component type.");
+            }
         }
 
         private static int[] ReadIndices(
