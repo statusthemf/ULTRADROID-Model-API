@@ -1483,6 +1483,42 @@ namespace ULTRADROID.Models
             }
         }
 
+        private static Vector4[] ReadTangents(
+            byte[] binary,
+            List<BufferView> views,
+            List<Accessor> accessors,
+            int accessorIndex)
+        {
+            Accessor accessor = GetAccessor(accessors, accessorIndex);
+
+            if (accessor.Type != "VEC4" ||
+                accessor.ComponentType != 5126 ||
+                accessor.Normalized)
+            {
+                throw new NotSupportedException(
+                    "TANGENT must use non-normalized FLOAT VEC4 components.");
+            }
+
+            byte[] raw = ReadAccessorBytes(
+                binary, views, accessor, 16);
+
+            Vector4[] result = new Vector4[accessor.Count];
+
+            for (int i = 0; i < result.Length; i++)
+            {
+                int offset = i * 16;
+
+                float x = ReadFloat(raw, offset);
+                float y = ReadFloat(raw, offset + 4);
+                float z = ReadFloat(raw, offset + 8);
+                float w = ReadFloat(raw, offset + 12);
+
+                result[i] = new Vector4(x, y, z, w);
+            }
+
+            return result;
+        }
+
         private static Vector2[] ReadVector2(
             byte[] binary,
             List<BufferView> views,
