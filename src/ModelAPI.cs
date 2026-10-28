@@ -120,6 +120,15 @@ namespace ULTRADROID.Models
             public Material Material;
         }
 
+        private sealed class PrimitiveBuildData
+        {
+            public Vector3[] Vertices;
+            public Vector3[] Normals;
+            public Vector2[] UVs;
+            public int[] Triangles;
+            public Material Material;
+        }
+
         internal static ModelInstance Load(string path, ModelLoadOptions options)
         {
             GameObject rootObject = null;
@@ -376,6 +385,22 @@ namespace ULTRADROID.Models
             JsonElement primitives = RequiredArray(meshData, "primitives");
             string meshName = GetString(meshData, "name", "Mesh");
 
+            List<PrimitiveBuildData> builtPrimitives =
+                new List<PrimitiveBuildData>();
+
+            List<Vector3> allVertices = new List<Vector3>();
+            List<Vector3> allNormals = new List<Vector3>();
+            List<Vector2> allUVs = new List<Vector2>();
+
+            List<int[]> submeshTriangles = new List<int[]>();
+            List<Material> submeshMaterials = new List<Material>();
+
+            bool allHaveNormals = true;
+            bool anyHaveUVs = false;
+            int totalVertices = 0;
+
+            Material defaultMaterial = null;
+
             foreach (JsonElement primitive in primitives.EnumerateArray())
             {
                 int mode = GetInt(primitive, "mode", 4);
@@ -387,13 +412,20 @@ namespace ULTRADROID.Models
                         ". Supported modes are TRIANGLES, TRIANGLE_STRIP, and TRIANGLE_FAN.");
                 }
 
-                if (!primitive.TryGetProperty("attributes", out JsonElement attributes) ||
-                    !attributes.TryGetProperty("POSITION", out JsonElement positionElement))
-                    throw new InvalidDataException("Mesh primitive has no POSITION attribute.");
+                if (!primitive.TryGetProperty(
+                        "attributes", out JsonElement attributes) ||
+                    !attributes.TryGetProperty(
+                        "POSITION", out JsonElement positionElement))
+                {
+                    throw new InvalidDataException(
+                        "Mesh primitive has no POSITION attribute.");
+                }
 
                 int positionAccessor = positionElement.GetInt32();
+
                 Vector3[] vertices = ReadVector3(
-                    binary, views, accessors, positionAccessor, options.FlipUvV, false);
+                    binary, views, accessors,
+                    positionAccessor, false, false);
 
                 if (vertices.Length == 0)
                     throw new InvalidDataException("Mesh has no vertices.");
@@ -401,13 +433,27 @@ namespace ULTRADROID.Models
                 Vector3[] normals = null;
                 Vector2[] uvs = null;
 
-                if (attributes.TryGetProperty("NORMAL", out JsonElement normalElement))
+                if (attributes.TryGetProperty(
+                        "NORMAL", out JsonElement normalElement))
+                {
                     normals = ReadVector3(
-                        binary, views, accessors, normalElement.GetInt32(), false, true);
+                        binary, views, accessors,
+                        normalElement.GetInt32(), false, true);
 
-                if (attributes.TryGetProperty("TEXCOORD_0", out JsonElement uvElement))
+                    if (normals.Length != vertices.Length)
+                        normals = null;
+                }
+
+                if (attributes.TryGetProperty(
+                        "TEXCOORD_0", out JsonElement uvElement))
+                {
                     uvs = ReadVector2(
-                        binary, views, accessors, uvElement.GetInt32(), options.FlipUvV);
+                        binary, views, accessors,
+                        uvElement.GetInt32(), options.FlipUvV);
+
+                    if (uvs.Length != vertices.Length)
+                        uvs = null;
+                }
 
                 int[] sourceIndices;
 
@@ -415,7 +461,8 @@ namespace ULTRADROID.Models
                         "indices", out JsonElement indexElement))
                 {
                     sourceIndices = ReadIndices(
-                        binary, views, accessors, indexElement.GetInt32());
+                        binary, views, accessors,
+                        indexElement.GetInt32());
                 }
                 else
                 {
@@ -485,45 +532,130 @@ namespace ULTRADROID.Models
                     triangles = converted.ToArray();
                 }
 
-                Mesh unityMesh = new Mesh();
-                unityMesh.name = meshName;
-
-                if (vertices.Length > 65535)
-                    unityMesh.indexFormat = IndexFormat.UInt32;
-
-                unityMesh.vertices = vertices;
-                unityMesh.triangles = triangles;
-
-                if (normals != null && normals.Length == vertices.Length)
-                    unityMesh.normals = normals;
-                else
-                    unityMesh.RecalculateNormals();
-
-                if (uvs != null && uvs.Length == vertices.Length)
-                    unityMesh.uv = uvs;
-
-                unityMesh.RecalculateBounds();
-
-                GameObject primitiveObject = new GameObject(meshName);
-                primitiveObject.transform.SetParent(parent, false);
-
-                MeshFilter filter = primitiveObject.AddComponent<MeshFilter>();
-                filter.sharedMesh = unityMesh;
-
-                MeshRenderer renderer = primitiveObject.AddComponent<MeshRenderer>();
                 int materialIndex = GetInt(primitive, "material", -1);
 
-                renderer.sharedMaterial = materialIndex >= 0 &&
-                                          materialIndex < materials.Count
-                    ? materials[materialIndex].Material
-                    : CreateDefaultMaterial();
+                Material primitiveMaterial;
 
-                if (options.CreateColliders)
+                if (materialIndex >= 0 && materialIndex < materials.Count)
                 {
-                    MeshCollider collider = primitiveObject.AddComponent<MeshCollider>();
-                    collider.sharedMesh = unityMesh;
+                    primitiveMaterial = materials[materialIndex].Material;
                 }
+                else
+                {
+                    if (defaultMaterial == null)
+                        defaultMaterial = CreateDefaultMaterial();
+
+                    primitiveMaterial = defaultMaterial;
+                }
+
+                PrimitiveBuildData data = new PrimitiveBuildData
+                {
+                    Vertices = vertices,
+                    Normals = normals,
+                    UVs = uvs,
+                    Triangles = triangles,
+                    Material = primitiveMaterial
+                };
+
+                builtPrimitives.Add(data);
+
+                allHaveNormals &= normals != null;
+
+                if (uvs != null)
+                    anyHaveUVs = true;
+
+                totalVertices = checked(totalVertices + vertices.Length);
             }
+
+            if (builtPrimitives.Count == 0)
+                throw new InvalidDataException("Mesh contains no primitives.");
+
+            // Combine primitive vertex data into one Unity mesh.
+            foreach (PrimitiveBuildData primitive in builtPrimitives)
+            {
+                int vertexOffset = allVertices.Count;
+
+                allVertices.AddRange(primitive.Vertices);
+
+                if (allHaveNormals)
+                {
+                    allNormals.AddRange(primitive.Normals);
+                }
+
+                if (anyHaveUVs)
+                {
+                    if (primitive.UVs != null)
+                    {
+                        allUVs.AddRange(primitive.UVs);
+                    }
+                    else
+                    {
+                        // Primitives without TEXCOORD_0 receive zero UVs.
+                        for (int i = 0; i < primitive.Vertices.Length; i++)
+                            allUVs.Add(Vector2.zero);
+                    }
+                }
+
+                int[] adjustedTriangles =
+                    new int[primitive.Triangles.Length];
+
+                for (int i = 0; i < primitive.Triangles.Length; i++)
+                {
+                    adjustedTriangles[i] =
+                        checked(primitive.Triangles[i] + vertexOffset);
+                }
+
+                submeshTriangles.Add(adjustedTriangles);
+                submeshMaterials.Add(primitive.Material);
+            }
+
+            Mesh unityMesh = new Mesh();
+            unityMesh.name = meshName;
+
+            if (totalVertices > 65535)
+                unityMesh.indexFormat = IndexFormat.UInt32;
+
+            unityMesh.SetVertices(allVertices);
+            unityMesh.subMeshCount = builtPrimitives.Count;
+
+            for (int i = 0; i < submeshTriangles.Count; i++)
+            {
+                unityMesh.SetTriangles(
+                    submeshTriangles[i], i, false);
+            }
+
+            if (allHaveNormals && allNormals.Count == totalVertices)
+                unityMesh.SetNormals(allNormals);
+            else
+                unityMesh.RecalculateNormals();
+
+            if (anyHaveUVs && allUVs.Count == totalVertices)
+                unityMesh.SetUVs(0, allUVs);
+
+            unityMesh.RecalculateBounds();
+
+            GameObject meshObject = new GameObject(meshName);
+            meshObject.transform.SetParent(parent, false);
+
+            MeshFilter filter = meshObject.AddComponent<MeshFilter>();
+            filter.sharedMesh = unityMesh;
+
+            MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
+            renderer.sharedMaterials = submeshMaterials.ToArray();
+
+            if (options.CreateColliders)
+            {
+                MeshCollider collider =
+                    meshObject.AddComponent<MeshCollider>();
+
+                collider.sharedMesh = unityMesh;
+            }
+
+            Debug.Log(
+                "[ULTRADROID Models API] Built mesh '" + meshName +
+                "': vertices=" + totalVertices +
+                ", submeshes=" + builtPrimitives.Count +
+                ", materials=" + submeshMaterials.Count);
         }
 
         private static Material CreateDefaultMaterial()
