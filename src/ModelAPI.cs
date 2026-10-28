@@ -380,9 +380,12 @@ namespace ULTRADROID.Models
             {
                 int mode = GetInt(primitive, "mode", 4);
 
-                if (mode != 4)
+                if (mode != 4 && mode != 5 && mode != 6)
+                {
                     throw new NotSupportedException(
-                        "Only TRIANGLES primitives are currently supported.");
+                        "Unsupported glTF primitive mode: " + mode +
+                        ". Supported modes are TRIANGLES, TRIANGLE_STRIP, and TRIANGLE_FAN.");
+                }
 
                 if (!primitive.TryGetProperty("attributes", out JsonElement attributes) ||
                     !attributes.TryGetProperty("POSITION", out JsonElement positionElement))
@@ -406,27 +409,80 @@ namespace ULTRADROID.Models
                     uvs = ReadVector2(
                         binary, views, accessors, uvElement.GetInt32(), options.FlipUvV);
 
-                int[] triangles;
+                int[] sourceIndices;
 
-                if (primitive.TryGetProperty("indices", out JsonElement indexElement))
+                if (primitive.TryGetProperty(
+                        "indices", out JsonElement indexElement))
                 {
-                    triangles = ReadIndices(
+                    sourceIndices = ReadIndices(
                         binary, views, accessors, indexElement.GetInt32());
                 }
                 else
                 {
-                    triangles = new int[vertices.Length];
+                    sourceIndices = new int[vertices.Length];
+
                     for (int i = 0; i < vertices.Length; i++)
-                        triangles[i] = i;
+                        sourceIndices[i] = i;
                 }
 
-                if (triangles.Length % 3 != 0)
-                    throw new InvalidDataException("Triangle index count is not divisible by 3.");
-
-                for (int i = 0; i < triangles.Length; i++)
+                for (int i = 0; i < sourceIndices.Length; i++)
                 {
-                    if (triangles[i] < 0 || triangles[i] >= vertices.Length)
-                        throw new InvalidDataException("Mesh index is out of range.");
+                    if (sourceIndices[i] < 0 ||
+                        sourceIndices[i] >= vertices.Length)
+                    {
+                        throw new InvalidDataException(
+                            "Mesh index is out of range.");
+                    }
+                }
+
+                int[] triangles;
+
+                if (mode == 4)
+                {
+                    if (sourceIndices.Length % 3 != 0)
+                    {
+                        throw new InvalidDataException(
+                            "Triangle index count is not divisible by 3.");
+                    }
+
+                    triangles = sourceIndices;
+                }
+                else if (mode == 5)
+                {
+                    // TRIANGLE_STRIP
+                    List<int> converted = new List<int>();
+
+                    for (int i = 0; i + 2 < sourceIndices.Length; i++)
+                    {
+                        if ((i & 1) == 0)
+                        {
+                            converted.Add(sourceIndices[i]);
+                            converted.Add(sourceIndices[i + 1]);
+                        }
+                        else
+                        {
+                            converted.Add(sourceIndices[i + 1]);
+                            converted.Add(sourceIndices[i]);
+                        }
+
+                        converted.Add(sourceIndices[i + 2]);
+                    }
+
+                    triangles = converted.ToArray();
+                }
+                else
+                {
+                    // TRIANGLE_FAN
+                    List<int> converted = new List<int>();
+
+                    for (int i = 1; i + 1 < sourceIndices.Length; i++)
+                    {
+                        converted.Add(sourceIndices[0]);
+                        converted.Add(sourceIndices[i]);
+                        converted.Add(sourceIndices[i + 1]);
+                    }
+
+                    triangles = converted.ToArray();
                 }
 
                 Mesh unityMesh = new Mesh();
