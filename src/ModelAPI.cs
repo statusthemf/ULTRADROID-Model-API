@@ -785,11 +785,6 @@ namespace ULTRADROID.Models
                 collider.sharedMesh = unityMesh;
             }
 
-            Debug.Log(
-                "[ULTRADROID Models API] Built mesh '" + meshName +
-                "': vertices=" + totalVertices +
-                ", submeshes=" + builtPrimitives.Count +
-                ", materials=" + submeshMaterials.Count);
         }
 
         private static Material CreateDefaultMaterial()
@@ -829,24 +824,11 @@ namespace ULTRADROID.Models
                     if (material.HasProperty("_Glossiness"))
                         material.SetFloat("_Glossiness", 0.3f);
 
-                    Debug.Log(
-                        "[ULTRADROID Models API] Selected lit shader: " +
-                        candidate.name +
-                        ", supported=" + candidate.isSupported +
-                        ", color=" + material.HasProperty("_Color") +
-                        ", baseColor=" + material.HasProperty("_BaseColor") +
-                        ", metallic=" + material.HasProperty("_Metallic") +
-                        ", smoothness=" +
-                        (material.HasProperty("_Smoothness") ||
-                         material.HasProperty("_Glossiness")));
-
                     return material;
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Debug.LogWarning(
-                        "[ULTRADROID Models API] Could not create shader '" +
-                        shaderName + "': " + ex.Message);
+                    // Try the next supported shader.
                 }
             }
 
