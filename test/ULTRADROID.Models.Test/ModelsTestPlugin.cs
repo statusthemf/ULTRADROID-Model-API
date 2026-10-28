@@ -3,7 +3,6 @@ using System.IO;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
-using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
 using ULTRADROID.Models;
 using UnityEngine;
@@ -14,7 +13,7 @@ namespace ULTRADROID.Models.Test
     [BepInPlugin(
         "somerandommaid.ultradroid.models.test",
         "ULTRADROID Models Test",
-        "0.3.1")]
+        "0.3.2")]
     [BepInDependency("somerandommaid.ultradroid.models")]
     public class ModelsTestPlugin : BasePlugin
     {
@@ -33,10 +32,14 @@ namespace ULTRADROID.Models.Test
                 ClassInjector.RegisterTypeInIl2Cpp<ModelTestLoader>();
 
                 AddComponent<ModelTestLoader>();
+
+                Log.LogInfo(
+                    "[Models Test] Playback test suite initialized.");
             }
             catch (Exception ex)
             {
-                Log.LogError($"Failed to initialize runtime: {ex}");
+                Log.LogError(
+                    "[Models Test] Failed to initialize runtime: " + ex);
             }
         }
     }
@@ -44,7 +47,6 @@ namespace ULTRADROID.Models.Test
     public class ModelTestLoader : MonoBehaviour
     {
         private float nextModelAttemptTime;
-
         private string detectedGameplayScene = "";
 
         private bool gameplayDetected;
@@ -53,6 +55,23 @@ namespace ULTRADROID.Models.Test
         private Camera currentCamera;
         private ModelInstance instance;
         private GlbAnimationPlayer animationPlayer;
+
+        // Automatic playback test state.
+        // 0 = start looping test
+        // 1 = check looping, then pause
+        // 2 = check pause, then resume
+        // 3 = check resume and test seek
+        // 4 = check half speed
+        // 5 = check reverse playback
+        // 6 = check non-looping playback
+        // 7 = all tests completed
+        private int testStage = -1;
+        private float testStageStartTime;
+        private float pausedTime;
+        private float reverseStartTime;
+        private float testDuration;
+
+        private bool testSuiteStarted;
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
         {
@@ -65,7 +84,8 @@ namespace ULTRADROID.Models.Test
                 Scene active = SceneManager.GetActiveScene();
                 string candidate = null;
 
-                if (active.IsValid() && active.isLoaded &&
+                if (active.IsValid() &&
+                    active.isLoaded &&
                     IsPlayableSceneName(active.name))
                 {
                     candidate = active.name;
@@ -76,7 +96,8 @@ namespace ULTRADROID.Models.Test
                     {
                         Scene scene = SceneManager.GetSceneAt(i);
 
-                        if (scene.IsValid() && scene.isLoaded &&
+                        if (scene.IsValid() &&
+                            scene.isLoaded &&
                             IsPlayableSceneName(scene.name))
                         {
                             candidate = scene.name;
@@ -86,7 +107,12 @@ namespace ULTRADROID.Models.Test
                 }
 
                 if (candidate == null)
+                {
+                    if (gameplayDetected)
+                        ResetGameplayState();
+
                     return;
+                }
 
                 if (!gameplayDetected ||
                     !string.Equals(
@@ -97,19 +123,20 @@ namespace ULTRADROID.Models.Test
                     OnGameplaySceneDetected(candidate);
                 }
 
-                if (modelLoadAttempted ||
-                    Time.unscaledTime < nextModelAttemptTime)
-                    return;
+                if (!modelLoadAttempted &&
+                    Time.unscaledTime >= nextModelAttemptTime)
+                {
+                    TryLoadModel();
+                }
 
-                TryLoadModel();
+                UpdatePlaybackTests();
             }
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogError(
-                    "[Models Test] Runtime error: " + ex.Message);
+                    "[Models Test] Runtime error: " + ex);
             }
         }
-
 
         private bool IsPlayableSceneName(string sceneName)
         {
@@ -119,7 +146,8 @@ namespace ULTRADROID.Models.Test
             string name = sceneName.Trim();
 
             if (string.Equals(
-                name, "uk_construct",
+                name,
+                "uk_construct",
                 StringComparison.OrdinalIgnoreCase))
                 return true;
 
@@ -157,29 +185,31 @@ namespace ULTRADROID.Models.Test
             gameplayDetected = true;
             modelLoadAttempted = false;
 
-            // Allow the game a little time to initialize its camera.
             nextModelAttemptTime = Time.unscaledTime + 2f;
 
             currentCamera = null;
+            testSuiteStarted = false;
+            testStage = -1;
+
             DestroyCurrentModel();
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Scene] Gameplay scene detected: " + sceneName);
         }
 
-        private static bool IsNonGameplayScene(string sceneName)
+        private void ResetGameplayState()
         {
-            if (string.IsNullOrEmpty(sceneName))
-                return true;
+            ModelsTestPlugin.Log.LogInfo(
+                "[Scene] No playable scene detected. Cleaning up test model.");
 
-            string scene = sceneName.ToLowerInvariant();
+            gameplayDetected = false;
+            detectedGameplayScene = "";
+            modelLoadAttempted = false;
+            testSuiteStarted = false;
+            testStage = -1;
+            currentCamera = null;
 
-            return scene.Contains("bootstrap") ||
-                   scene == "intro" ||
-                   scene.Contains("mainmenu") ||
-                   scene.Contains("main_menu") ||
-                   scene.Contains("main menu") ||
-                   scene.Contains("title") ||
-                   scene.Contains("loading") ||
-                   scene.Contains("credits") ||
-                   scene.Contains("ending");
+            DestroyCurrentModel();
         }
 
         private Camera FindUsableCamera()
@@ -216,7 +246,8 @@ namespace ULTRADROID.Models.Test
                 modelLoadAttempted = true;
 
                 ModelsTestPlugin.Log.LogError(
-                    $"[Model] File missing: {ModelsTestPlugin.ModelPath}");
+                    "[Model] File missing: " +
+                    ModelsTestPlugin.ModelPath);
 
                 return;
             }
@@ -250,84 +281,441 @@ namespace ULTRADROID.Models.Test
                     ModelsTestPlugin.ModelPath,
                     options);
 
-                if (instance == null || instance.Root == null)
+                if (instance == null ||
+                    instance.Root == null ||
+                    !instance.IsValid)
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Model] LoadGLB returned no valid root.");
+                        "[Model] LoadGLB returned no valid model root.");
 
                     return;
                 }
-                
-                
-                
+
                 SkinnedMeshRenderer[] skinned =
-                instance.Root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+                    instance.Root.GetComponentsInChildren
+                        <SkinnedMeshRenderer>(true);
 
                 MeshRenderer[] staticMeshes =
-                instance.Root.GetComponentsInChildren<MeshRenderer>(true);
+                    instance.Root.GetComponentsInChildren
+                        <MeshRenderer>(true);
 
                 ModelsTestPlugin.Log.LogInfo(
-                    "[Animation Debug] Skinned renderers: " + skinned.Length);
+                    "[Animation Debug] Skinned renderers: " +
+                    skinned.Length);
 
                 ModelsTestPlugin.Log.LogInfo(
-                    "[Animation Debug] Static mesh renderers: " + staticMeshes.Length);
+                    "[Animation Debug] Static mesh renderers: " +
+                    staticMeshes.Length);
 
                 ModelsTestPlugin.Log.LogInfo(
-                    "[Model] GLB loaded successfully: " + instance.SourcePath);
-
+                    "[Model] GLB loaded successfully: " +
+                    instance.SourcePath);
 
                 int animationCount = instance.Animations.Count;
 
                 ModelsTestPlugin.Log.LogInfo(
-                    "[Animation] Supported clips found: " + animationCount);
+                    "[Animation] Supported clips found: " +
+                    animationCount);
 
                 for (int i = 0; i < animationCount; i++)
                 {
                     ModelsTestPlugin.Log.LogInfo(
                         "[Animation] Clip " + i + ": '" +
-                        instance.Animations[i].Name + "' (duration: " +
-                        instance.Animations[i].Duration + " seconds)");
+                        instance.Animations[i].Name +
+                        "' (duration: " +
+                        instance.Animations[i].Duration +
+                        " seconds)");
                 }
 
                 if (animationCount == 0)
                 {
                     ModelsTestPlugin.Log.LogWarning(
-                        "[Animation] No supported animation clips were found.");
+                        "[Animation] No supported animation clips found.");
 
                     return;
                 }
 
-                animationPlayer = GlbAnimationPlayerFactory.Attach(instance);
-                
-                if (animationPlayer.Play("Bow"))
-                {
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[Animation] Started '" + animationPlayer.CurrentClipName +
-                        "', duration=" + animationPlayer.Duration);
-                }
-                else
+                animationPlayer =
+                    GlbAnimationPlayerFactory.Attach(instance);
+
+                if (animationPlayer == null)
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Animation] Failed to start 'Bow'.");
+                        "[Animation] Failed to attach animation player.");
+
+                    return;
                 }
 
+                testDuration = FindClipDuration("Bow");
 
+                if (testDuration <= 0f)
+                {
+                    ModelsTestPlugin.Log.LogError(
+                        "[Animation] Bow was not found or has invalid duration.");
+
+                    return;
+                }
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Animation] Player attached. Bow duration: " +
+                    testDuration);
+
+                StartPlaybackTestSuite();
             }
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogError(
-                    $"[Model] LOAD FAILED: {ex}");
+                    "[Model] LOAD FAILED: " + ex);
             }
         }
 
+        private float FindClipDuration(string clipName)
+        {
+            for (int i = 0; i < instance.Animations.Count; i++)
+            {
+                ModelAnimationClip clip = instance.Animations[i];
 
-        private void OnDestroy()
+                if (clip != null &&
+                    string.Equals(
+                        clip.Name,
+                        clipName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return clip.Duration;
+                }
+            }
+
+            return 0f;
+        }
+
+        private void StartPlaybackTestSuite()
+        {
+            if (animationPlayer == null)
+                return;
+
+            testSuiteStarted = true;
+
+            ModelsTestPlugin.Log.LogInfo(
+                "========================================");
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[TEST SUITE] Starting all six playback tests.");
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[TEST SUITE] Tests will run automatically in sequence.");
+
+            // TEST 1: Normal looping.
+            animationPlayer.Loop = true;
+            animationPlayer.PlaybackSpeed = 1f;
+
+            if (!animationPlayer.Play("Bow"))
+            {
+                LogTestResult(
+                    "Normal looping",
+                    false,
+                    "Play(\"Bow\") failed.");
+
+                testStage = 7;
+                return;
+            }
+
+            testStage = 1;
+            testStageStartTime = Time.unscaledTime;
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[TEST 1/6] Normal looping started at speed 1x.");
+        }
+
+        private void UpdatePlaybackTests()
+        {
+            if (!testSuiteStarted ||
+                animationPlayer == null ||
+                instance == null ||
+                !instance.IsValid ||
+                testStage < 1 ||
+                testStage > 6)
+                return;
+
+            float elapsed = Time.unscaledTime - testStageStartTime;
+
+            switch (testStage)
+            {
+                case 1:
+                {
+                    // Wait longer than one complete animation cycle.
+                    if (elapsed < testDuration + 0.5f)
+                        return;
+
+                    bool loopPassed =
+                        animationPlayer.IsPlaying &&
+                        animationPlayer.Loop &&
+                        animationPlayer.CurrentTime >= 0f &&
+                        animationPlayer.CurrentTime < testDuration * 0.5f;
+
+                    LogTestResult(
+                        "Normal looping",
+                        loopPassed,
+                        "Playing=" + animationPlayer.IsPlaying +
+                        ", Loop=" + animationPlayer.Loop +
+                        ", Time=" + animationPlayer.CurrentTime);
+
+                    // TEST 2: Pause.
+                    animationPlayer.Pause();
+                    pausedTime = animationPlayer.CurrentTime;
+
+                    testStage = 2;
+                    testStageStartTime = Time.unscaledTime;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[TEST 2/6] Paused at time " + pausedTime + ".");
+
+                    return;
+                }
+
+                case 2:
+                {
+                    // Leave the player paused long enough to check stability.
+                    if (elapsed < 0.6f)
+                        return;
+
+                    float pauseDifference = Mathf.Abs(
+                        animationPlayer.CurrentTime - pausedTime);
+
+                    bool pausePassed =
+                        !animationPlayer.IsPlaying &&
+                        pauseDifference <= 0.05f;
+
+                    LogTestResult(
+                        "Pause",
+                        pausePassed,
+                        "Playing=" + animationPlayer.IsPlaying +
+                        ", Time difference=" + pauseDifference);
+
+                    // TEST 3: Resume.
+                    animationPlayer.Resume();
+
+                    testStage = 3;
+                    testStageStartTime = Time.unscaledTime;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[TEST 3/6] Resumed playback.");
+
+                    return;
+                }
+
+                case 3:
+                {
+                    if (elapsed < 0.6f)
+                        return;
+
+                    float resumeDifference = Mathf.Abs(
+                        animationPlayer.CurrentTime - pausedTime);
+
+                    bool resumePassed =
+                        animationPlayer.IsPlaying &&
+                        resumeDifference > 0.05f;
+
+                    LogTestResult(
+                        "Resume",
+                        resumePassed,
+                        "Playing=" + animationPlayer.IsPlaying +
+                        ", Time difference from paused pose=" +
+                        resumeDifference);
+
+                    // TEST 4: Seek to the middle of the clip.
+                    animationPlayer.Pause();
+
+                    float seekTarget = testDuration * 0.5f;
+                    animationPlayer.Seek(seekTarget);
+
+                    float seekDifference = Mathf.Abs(
+                        animationPlayer.CurrentTime - seekTarget);
+
+                    bool seekPassed = seekDifference <= 0.05f;
+
+                    LogTestResult(
+                        "Seek",
+                        seekPassed,
+                        "Target=" + seekTarget +
+                        ", Actual=" + animationPlayer.CurrentTime +
+                        ", Difference=" + seekDifference);
+
+                    // TEST 5: Half speed.
+                    animationPlayer.Loop = true;
+                    animationPlayer.PlaybackSpeed = 0.5f;
+
+                    if (!animationPlayer.Play("Bow"))
+                    {
+                        LogTestResult(
+                            "Half speed",
+                            false,
+                            "Play(\"Bow\") failed.");
+
+                        testStage = 7;
+                        return;
+                    }
+
+                    testStage = 4;
+                    testStageStartTime = Time.unscaledTime;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[TEST 5/6] Playing Bow at half speed.");
+
+                    return;
+                }
+
+                case 4:
+                {
+                    // One second of real time should advance roughly 0.5
+                    // seconds of animation time at speed 0.5.
+                    if (elapsed < 1f)
+                        return;
+
+                    float halfSpeedTime = animationPlayer.CurrentTime;
+
+                    bool halfSpeedPassed =
+                        animationPlayer.IsPlaying &&
+                        halfSpeedTime >= 0.25f &&
+                        halfSpeedTime <= 0.85f;
+
+                    LogTestResult(
+                        "Half speed",
+                        halfSpeedPassed,
+                        "Expected about 0.5 seconds; actual=" +
+                        halfSpeedTime);
+
+                    // TEST 6: Reverse playback.
+                    animationPlayer.Loop = true;
+                    animationPlayer.PlaybackSpeed = 1f;
+                    animationPlayer.Play("Bow");
+
+                    reverseStartTime = testDuration * 0.75f;
+                    animationPlayer.Seek(reverseStartTime);
+                    animationPlayer.PlaybackSpeed = -1f;
+
+                    testStage = 5;
+                    testStageStartTime = Time.unscaledTime;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[TEST 6/6] Reverse playback started from time " +
+                        reverseStartTime + ".");
+
+                    return;
+                }
+
+                case 5:
+                {
+                    if (elapsed < 0.5f)
+                        return;
+
+                    float reverseCurrentTime =
+                        animationPlayer.CurrentTime;
+
+                    bool reversePassed =
+                        animationPlayer.IsPlaying &&
+                        reverseCurrentTime < reverseStartTime &&
+                        reverseCurrentTime >= 0f;
+
+                    LogTestResult(
+                        "Reverse playback",
+                        reversePassed,
+                        "Start=" + reverseStartTime +
+                        ", Actual=" + reverseCurrentTime +
+                        ", Speed=" + animationPlayer.PlaybackSpeed);
+
+                    // TEST 7: Non-looping playback.
+                    animationPlayer.Loop = false;
+                    animationPlayer.PlaybackSpeed = 1f;
+
+                    if (!animationPlayer.Play("Bow"))
+                    {
+                        LogTestResult(
+                            "Non-looping playback",
+                            false,
+                            "Play(\"Bow\") failed.");
+
+                        testStage = 7;
+                        FinishPlaybackTestSuite();
+                        return;
+                    }
+
+                    testStage = 6;
+                    testStageStartTime = Time.unscaledTime;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[TEST 7/7] Non-looping playback started.");
+
+                    return;
+                }
+
+                case 6:
+                {
+                    // Allow the full clip to finish.
+                    if (elapsed < testDuration + 0.5f)
+                        return;
+
+                    float finalTime = animationPlayer.CurrentTime;
+
+                    bool nonLoopPassed =
+                        !animationPlayer.IsPlaying &&
+                        Mathf.Abs(finalTime - testDuration) <= 0.05f;
+
+                    LogTestResult(
+                        "Non-looping playback",
+                        nonLoopPassed,
+                        "Playing=" + animationPlayer.IsPlaying +
+                        ", Final time=" + finalTime +
+                        ", Duration=" + testDuration);
+
+                    testStage = 7;
+                    FinishPlaybackTestSuite();
+
+                    return;
+                }
+            }
+        }
+
+        private void LogTestResult(
+            string testName,
+            bool passed,
+            string details)
+        {
+            string result = passed ? "PASS" : "FAIL";
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[TEST RESULT] " + result + " - " +
+                testName + " | " + details);
+        }
+
+        private void FinishPlaybackTestSuite()
+        {
+            if (animationPlayer != null)
+            {
+                // Leave the model in a predictable state after testing.
+                animationPlayer.Loop = true;
+                animationPlayer.PlaybackSpeed = 1f;
+                animationPlayer.Play("Bow");
+            }
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[TEST SUITE] All playback tests have finished.");
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[TEST SUITE] Review the PASS/FAIL entries above.");
+
+            ModelsTestPlugin.Log.LogInfo(
+                "========================================");
+        }
+
+        public void OnDestroy()
         {
             DestroyCurrentModel();
         }
 
         private void DestroyCurrentModel()
         {
+            animationPlayer = null;
+
             if (instance == null)
                 return;
 
@@ -338,7 +726,7 @@ namespace ULTRADROID.Models.Test
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogWarning(
-                    $"[Model] Destroy failed: {ex}");
+                    "[Model] Destroy failed: " + ex);
             }
 
             instance = null;
