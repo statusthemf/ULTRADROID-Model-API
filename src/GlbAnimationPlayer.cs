@@ -125,8 +125,13 @@ namespace ULTRADROID.Models
             if (id == 0 || !States.TryGetValue(id, out PlaybackState state))
                 return null;
 
-            if (state.Model == null || !state.Model.IsValid)
+            if (state.Model == null ||
+                !state.Model.IsValid ||
+                state.Model.Root == null)
+            {
+                States.Remove(id);
                 return null;
+            }
 
             return state;
         }
@@ -203,10 +208,21 @@ namespace ULTRADROID.Models
         public static void Seek(int id, float time)
         {
             PlaybackState state = GetState(id);
-            if (state == null || state.Clip == null)
+
+            if (state == null ||
+                state.Clip == null ||
+                float.IsNaN(time) ||
+                float.IsInfinity(time))
                 return;
 
-            state.Time = Mathf.Clamp(time, 0f, state.Clip.Duration);
+            float duration = state.Clip.Duration;
+
+            if (float.IsNaN(duration) ||
+                float.IsInfinity(duration) ||
+                duration < 0f)
+                return;
+
+            state.Time = Mathf.Clamp(time, 0f, duration);
             Apply(state, state.Time);
         }
 
@@ -258,32 +274,50 @@ namespace ULTRADROID.Models
         public static void SetSpeed(int id, float value)
         {
             PlaybackState state = GetState(id);
-            if (state != null && !float.IsNaN(value) &&
-                !float.IsInfinity(value))
-                state.Speed = value;
+
+            if (state == null ||
+                float.IsNaN(value) ||
+                float.IsInfinity(value))
+                return;
+
+            state.Speed = value;
         }
 
         public static void Tick(int id, float deltaTime)
         {
             PlaybackState state = GetState(id);
 
-            if (state == null || !state.Playing || state.Clip == null)
+            if (state == null ||
+                !state.Playing ||
+                state.Clip == null)
+                return;
+
+            if (float.IsNaN(deltaTime) ||
+                float.IsInfinity(deltaTime) ||
+                deltaTime < 0f)
                 return;
 
             float duration = state.Clip.Duration;
 
-            if (duration <= 0f)
+            if (float.IsNaN(duration) ||
+                float.IsInfinity(duration) ||
+                duration <= 0f)
             {
+                state.Time = 0f;
                 Apply(state, 0f);
-                if (!state.Loop)
-                    state.Playing = false;
+                state.Playing = false;
                 return;
             }
+
+            // A speed of zero holds the current pose.
+            if (state.Speed == 0f || deltaTime == 0f)
+                return;
 
             state.Time += deltaTime * state.Speed;
 
             if (state.Loop)
             {
+                // Wrap correctly for both forward and reverse playback.
                 state.Time %= duration;
 
                 if (state.Time < 0f)
@@ -294,16 +328,19 @@ namespace ULTRADROID.Models
                 if (state.Time >= duration)
                 {
                     state.Time = duration;
-                    Apply(state, state.Time);
+                    Apply(state, duration);
                     state.Playing = false;
                     return;
                 }
 
-                if (state.Time <= 0f && state.Speed < 0f)
+                if (state.Time <= 0f)
                 {
                     state.Time = 0f;
                     Apply(state, 0f);
-                    state.Playing = false;
+
+                    if (state.Speed < 0f)
+                        state.Playing = false;
+
                     return;
                 }
             }
