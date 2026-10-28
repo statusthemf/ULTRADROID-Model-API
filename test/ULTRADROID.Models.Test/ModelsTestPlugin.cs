@@ -287,15 +287,15 @@ namespace ULTRADROID.Models.Test
 
                 animationPlayer.Initialize(instance);
 
-                if (animationPlayer.Play("bow"))
+                if (animationPlayer.Play("Bow"))
                 {
                     ModelsTestPlugin.Log.LogInfo(
-                        "[Animation] Successfully started 'bow'.");
+                        "[Animation] Successfully started 'Bow'.");
                 }
                 else
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Animation] Could not play 'bow'. Check the clip list above.");
+                        "[Animation] Could not play 'Bow'. Check the clip list above.");
                 }
 
 
