@@ -775,24 +775,35 @@ namespace ULTRADROID.Models
             filter.sharedMesh = unityMesh;
 
             MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
-            Debug.LogError(
-                "[MODELAPI BUILD CHECK] BuildMesh reached. Materials=" +
-                submeshMaterials.Count);
             renderer.sharedMaterials = submeshMaterials.ToArray();
+            Debug.LogError(
+                "[MODELAPI BUILD CHECK] Renderer material assignment reached.");
 
-            for (int i = 0; i < submeshMaterials.Count; i++)
+            Material[] debugMaterials = renderer.sharedMaterials;
+
+            for (int i = 0; i < debugMaterials.Length; i++)
             {
-                Material mat = submeshMaterials[i];
+                Material mat = debugMaterials[i];
+
+                if (mat == null)
+                {
+                    Debug.LogWarning(
+                        "[ULTRADROID Models API] Material[" + i + "] is NULL.");
+                    continue;
+                }
+
+                Shader shader = mat.shader;
 
                 Debug.Log(
-                    "[ULTRADROID Models API] Renderer material[" + i + "]='" +
-                    (mat != null ? mat.name : "NULL") +
-                    "', shader='" +
-                    (mat != null && mat.shader != null
-                        ? mat.shader.name
-                        : "NULL") +
-                    "', supported=" +
-                    (mat != null && mat.shader != null && mat.shader.isSupported));
+                    "[ULTRADROID Models API] MATERIAL DIAGNOSTIC" +
+                    " | index=" + i +
+                    " | material=" + mat.name +
+                    " | shader=" + (shader != null ? shader.name : "NULL") +
+                    " | supported=" + (shader != null && shader.isSupported) +
+                    " | color=" + mat.HasProperty("_Color") +
+                    " | baseColor=" + mat.HasProperty("_BaseColor") +
+                    " | mainTex=" + mat.HasProperty("_MainTex") +
+                    " | baseMap=" + mat.HasProperty("_BaseMap"));
             }
 
             if (options.CreateColliders)
@@ -1488,42 +1499,6 @@ namespace ULTRADROID.Models
                     throw new NotSupportedException(
                         "Unsupported vertex color component type.");
             }
-        }
-
-        private static Vector4[] ReadTangents(
-            byte[] binary,
-            List<BufferView> views,
-            List<Accessor> accessors,
-            int accessorIndex)
-        {
-            Accessor accessor = GetAccessor(accessors, accessorIndex);
-
-            if (accessor.Type != "VEC4" ||
-                accessor.ComponentType != 5126 ||
-                accessor.Normalized)
-            {
-                throw new NotSupportedException(
-                    "TANGENT must use non-normalized FLOAT VEC4 components.");
-            }
-
-            byte[] raw = ReadAccessorBytes(
-                binary, views, accessor, 16);
-
-            Vector4[] result = new Vector4[accessor.Count];
-
-            for (int i = 0; i < result.Length; i++)
-            {
-                int offset = i * 16;
-
-                float x = ReadFloat(raw, offset);
-                float y = ReadFloat(raw, offset + 4);
-                float z = ReadFloat(raw, offset + 8);
-                float w = ReadFloat(raw, offset + 12);
-
-                result[i] = new Vector4(x, y, z, w);
-            }
-
-            return result;
         }
 
         private static Vector2[] ReadVector2(
