@@ -29,7 +29,9 @@ namespace ULTRADROID.Models.Test
 
             try
             {
+                ClassInjector.RegisterTypeInIl2Cpp<GlbAnimationPlayer>();
                 ClassInjector.RegisterTypeInIl2Cpp<ModelTestLoader>();
+
                 AddComponent<ModelTestLoader>();
             }
             catch (Exception ex)
@@ -50,6 +52,7 @@ namespace ULTRADROID.Models.Test
 
         private Camera currentCamera;
         private ModelInstance instance;
+        private GlbAnimationPlayer animationPlayer;
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
         {
@@ -253,6 +256,46 @@ namespace ULTRADROID.Models.Test
                         "[Model] LoadGLB returned no valid root.");
 
                     return;
+                }
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Model] GLB loaded successfully: " + instance.SourcePath);
+
+                int animationCount = instance.Animations.Count;
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Animation] Supported clips found: " + animationCount);
+
+                for (int i = 0; i < animationCount; i++)
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Animation] Clip " + i + ": '" +
+                        instance.Animations[i].Name + "' (duration: " +
+                        instance.Animations[i].Duration + " seconds)");
+                }
+
+                if (animationCount == 0)
+                {
+                    ModelsTestPlugin.Log.LogWarning(
+                        "[Animation] No supported animation clips were found.");
+
+                    return;
+                }
+
+                animationPlayer =
+                    instance.Root.AddComponent<GlbAnimationPlayer>();
+
+                animationPlayer.Initialize(instance);
+
+                if (animationPlayer.Play("bow"))
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Animation] Successfully started 'bow'.");
+                }
+                else
+                {
+                    ModelsTestPlugin.Log.LogError(
+                        "[Animation] Could not play 'bow'. Check the clip list above.");
                 }
 
 
