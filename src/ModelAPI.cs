@@ -776,35 +776,6 @@ namespace ULTRADROID.Models
 
             MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
             renderer.sharedMaterials = submeshMaterials.ToArray();
-            Debug.LogError(
-                "[MODELAPI BUILD CHECK] Renderer material assignment reached.");
-
-            Material[] debugMaterials = renderer.sharedMaterials;
-
-            for (int i = 0; i < debugMaterials.Length; i++)
-            {
-                Material mat = debugMaterials[i];
-
-                if (mat == null)
-                {
-                    Debug.LogWarning(
-                        "[ULTRADROID Models API] Material[" + i + "] is NULL.");
-                    continue;
-                }
-
-                Shader shader = mat.shader;
-
-                Debug.Log(
-                    "[ULTRADROID Models API] MATERIAL DIAGNOSTIC" +
-                    " | index=" + i +
-                    " | material=" + mat.name +
-                    " | shader=" + (shader != null ? shader.name : "NULL") +
-                    " | supported=" + (shader != null && shader.isSupported) +
-                    " | color=" + mat.HasProperty("_Color") +
-                    " | baseColor=" + mat.HasProperty("_BaseColor") +
-                    " | mainTex=" + mat.HasProperty("_MainTex") +
-                    " | baseMap=" + mat.HasProperty("_BaseMap"));
-            }
 
             if (options.CreateColliders)
             {
@@ -823,10 +794,6 @@ namespace ULTRADROID.Models
 
         private static Material CreateDefaultMaterial()
         {
-            Debug.LogError(
-                "[MODELAPI BUILD CHECK] CreateDefaultMaterial reached. Version=" +
-                ModelAPI.Version);
-
             string[] preferredShaders =
             {
                 "Standard",
@@ -1161,13 +1128,18 @@ namespace ULTRADROID.Models
                     if (!packedMetallicRoughness)
                     {
                         if (material.HasProperty("_Metallic"))
-                            material.SetFloat("_Metallic", metallic);
+                            material.SetFloat("_Metallic", metallic * 0.85f);
+
+                        float smoothness = 1f - roughness;
+
+                        // Slightly reduce excessive shine without flattening the textures.
+                        smoothness *= 0.85f;
 
                         if (material.HasProperty("_Smoothness"))
-                            material.SetFloat("_Smoothness", 1f - roughness);
+                            material.SetFloat("_Smoothness", smoothness);
 
                         if (material.HasProperty("_Glossiness"))
-                            material.SetFloat("_Glossiness", 1f - roughness);
+                            material.SetFloat("_Glossiness", smoothness);
                     }
 
                     if (loadTextures && pbr.TryGetProperty(
@@ -1528,41 +1500,6 @@ namespace ULTRADROID.Models
                 float v = ReadFloat(raw, offset + 4);
 
                 result[i] = new Vector2(u, flipV ? 1f - v : v);
-            }
-
-            return result;
-        }
-
-        private static Vector4[] ReadTangents(
-            byte[] binary,
-            List<BufferView> views,
-            List<Accessor> accessors,
-            int accessorIndex)
-        {
-            Accessor accessor = GetAccessor(accessors, accessorIndex);
-
-            if (accessor.Type != "VEC4" ||
-                accessor.ComponentType != 5126 ||
-                accessor.Normalized)
-            {
-                throw new NotSupportedException(
-                    "TANGENT attributes must use non-normalized FLOAT VEC4.");
-            }
-
-            byte[] raw = ReadAccessorBytes(
-                binary, views, accessor, 16);
-
-            Vector4[] result = new Vector4[accessor.Count];
-
-            for (int i = 0; i < result.Length; i++)
-            {
-                int offset = i * 16;
-
-                result[i] = new Vector4(
-                    ReadFloat(raw, offset),
-                    ReadFloat(raw, offset + 4),
-                    ReadFloat(raw, offset + 8),
-                    ReadFloat(raw, offset + 12));
             }
 
             return result;
