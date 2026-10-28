@@ -30,7 +30,8 @@ namespace ULTRADROID.Models
     public enum ModelAnimationInterpolation
     {
         Linear,
-        Step
+        Step,
+        CubicSpline
     }
 
     public sealed class ModelAnimationClip
@@ -47,17 +48,39 @@ namespace ULTRADROID.Models
         {
             Name = name;
             Duration = duration;
-            Channels = channels;
+            Channels = channels ?? new List<ModelAnimationChannel>();
         }
     }
 
     internal sealed class ModelAnimationChannel
     {
+        // Transform channels use Target and Path.
         public Transform Target;
         public ModelAnimationPath Path;
+
+        // Morph-weight channels will use MorphRenderer and MorphShapeIndices.
+        public SkinnedMeshRenderer MorphRenderer;
+        public int[] MorphShapeIndices;
+
         public ModelAnimationInterpolation Interpolation;
+
+        // One timestamp per keyframe.
         public float[] Times;
+
+        // LINEAR / STEP: one value per keyframe.
+        // CUBICSPLINE: one value per keyframe, plus its tangents below.
         public Vector4[] Values;
+
+        // glTF CUBICSPLINE tangents are derivatives with respect to time.
+        // These arrays are null for LINEAR and STEP channels.
+        public Vector4[] InTangents;
+        public Vector4[] OutTangents;
+
+        // For a morph channel, each keyframe contains one weight per target.
+        public int MorphTargetCount;
+        public float[] MorphValues;
+        public float[] MorphInTangents;
+        public float[] MorphOutTangents;
     }
 
     public sealed class ModelInstance
