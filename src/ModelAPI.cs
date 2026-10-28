@@ -775,6 +775,9 @@ namespace ULTRADROID.Models
             filter.sharedMesh = unityMesh;
 
             MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
+            Debug.LogError(
+                "[MODELAPI BUILD CHECK] BuildMesh reached. Materials=" +
+                submeshMaterials.Count);
             renderer.sharedMaterials = submeshMaterials.ToArray();
 
             for (int i = 0; i < submeshMaterials.Count; i++)
@@ -809,6 +812,10 @@ namespace ULTRADROID.Models
 
         private static Material CreateDefaultMaterial()
         {
+            Debug.LogError(
+                "[MODELAPI BUILD CHECK] CreateDefaultMaterial reached. Version=" +
+                ModelAPI.Version);
+
             string[] preferredShaders =
             {
                 "Standard",
