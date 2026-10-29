@@ -555,7 +555,7 @@ namespace ULTRADROID.Models
                 if (crossed)
                 {
                     try { entry.Callback?.Invoke(); }
-                    catch (Exception ex) { Debug.LogException(ex); }
+                    catch (Exception ex) { Debug.LogError(ex.ToString()); }
                 }
             }
         }
