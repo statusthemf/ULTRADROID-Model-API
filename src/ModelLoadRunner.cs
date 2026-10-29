@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Threading.Tasks;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
@@ -9,6 +10,8 @@ namespace ULTRADROID.Models
     {
         private static bool _registered;
 
+        private Task<GlbImporter.PreparedGlb> _prepareTask;
+        private GlbImporter.PreparedGlb _prepared;
         private IEnumerator _routine;
         private Action<ModelInstance> _onCompleted;
         private Action<Exception> _onError;
@@ -60,21 +63,55 @@ namespace ULTRADROID.Models
             _onCompleted = onCompleted;
             _onError = onError;
 
-            _routine = GlbImporter.LoadIncremental(
-                path,
-                options,
-                instance => _loadedModel = instance);
+            _prepareTask = Task.Run(
+                () => GlbImporter.Prepare(path, options));
         }
 
         private void Update()
         {
             if (_routine == null)
+            {
+                if (_prepareTask == null || !_prepareTask.IsCompleted)
+                    return;
+
+                Task<GlbImporter.PreparedGlb> completedTask = _prepareTask;
+                _prepareTask = null;
+
+                if (completedTask.IsCanceled)
+                {
+                    Fail(new OperationCanceledException(
+                        "GLB preparation was canceled."));
+                    return;
+                }
+
+                if (completedTask.IsFaulted)
+                {
+                    Fail(completedTask.Exception?.GetBaseException() ??
+                        new InvalidOperationException(
+                            "GLB preparation failed."));
+                    return;
+                }
+
+                try
+                {
+                    _prepared = completedTask.GetAwaiter().GetResult();
+                    _routine = GlbImporter.LoadIncremental(
+                        _prepared,
+                        instance => _loadedModel = instance);
+                }
+                catch (Exception exception)
+                {
+                    Fail(exception);
+                }
+
                 return;
+            }
 
             bool hasNext;
 
             try
             {
+                // Advance exactly one loading step per frame.
                 hasNext = _routine.MoveNext();
             }
             catch (Exception exception)
@@ -92,6 +129,7 @@ namespace ULTRADROID.Models
         private void Complete()
         {
             DisposeRoutine();
+            DisposePrepared();
 
             ModelInstance model = _loadedModel;
             Action<ModelInstance> callback = _onCompleted;
@@ -105,6 +143,7 @@ namespace ULTRADROID.Models
         private void Fail(Exception exception)
         {
             DisposeRoutine();
+            DisposePrepared();
 
             Action<Exception> callback = _onError;
             ClearCallbacks();
@@ -140,6 +179,12 @@ namespace ULTRADROID.Models
             _routine = null;
         }
 
+        private void DisposePrepared()
+        {
+            _prepared?.Dispose();
+            _prepared = null;
+        }
+
         private void ClearCallbacks()
         {
             _onCompleted = null;
@@ -150,7 +195,29 @@ namespace ULTRADROID.Models
         private void OnDestroy()
         {
             DisposeRoutine();
+            DisposePrepared();
             ClearCallbacks();
+
+            Task<GlbImporter.PreparedGlb> pending = _prepareTask;
+            _prepareTask = null;
+
+            if (pending == null)
+                return;
+
+            if (pending.Status == TaskStatus.RanToCompletion)
+            {
+                pending.Result.Dispose();
+            }
+            else if (!pending.IsCompleted)
+            {
+                pending.ContinueWith(
+                    task =>
+                    {
+                        if (task.Status == TaskStatus.RanToCompletion)
+                            task.Result.Dispose();
+                    },
+                    TaskScheduler.Default);
+            }
         }
     }
 }
