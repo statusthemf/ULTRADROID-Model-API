@@ -572,9 +572,9 @@ namespace ULTRADROID.Models
                             break;
 
                         case "weights":
-                            // Morph-target animation is not supported yet.
-                            continue;
-
+                            throw new NotSupportedException(
+                                "Morph-weight animation requires blend-shape import support.");
+        
                         default:
                             throw new NotSupportedException(
                                 "Unsupported animation target path: " + path);
