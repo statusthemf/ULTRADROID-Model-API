@@ -612,8 +612,8 @@ namespace ULTRADROID.Models
                             break;
 
                         case "CUBICSPLINE":
-                            throw new NotSupportedException(
-                                "CUBICSPLINE animation interpolation is not supported yet.");
+                            interpolation = ModelAnimationInterpolation.CubicSpline;
+                            break;
 
                         default:
                             throw new NotSupportedException(
@@ -639,19 +639,10 @@ namespace ULTRADROID.Models
                     float[] times = ReadAnimationTimes(
                         binary, views, inputAccessor);
 
-                    Vector4[] values = ReadAnimationValues(
-                        binary, views, outputAccessor, expectedComponents);
-
                     if (times.Length == 0)
                     {
                         throw new InvalidDataException(
                             "Animation sampler contains no keyframes.");
-                    }
-
-                    if (times.Length != values.Length)
-                    {
-                        throw new InvalidDataException(
-                            "Animation input and output key counts do not match.");
                     }
 
                     for (int i = 0; i < times.Length; i++)
@@ -671,6 +662,56 @@ namespace ULTRADROID.Models
                         }
                     }
 
+                    Vector4[] values;
+                    Vector4[] inTangents = null;
+                    Vector4[] outTangents = null;
+
+                    if (interpolation == ModelAnimationInterpolation.CubicSpline)
+                    {
+                        int expectedOutputCount = checked(times.Length * 3);
+
+                        if (outputAccessor.Count != expectedOutputCount)
+                        {
+                            throw new InvalidDataException(
+                                "CUBICSPLINE output must contain exactly three " +
+                                "values per input keyframe.");
+                        }
+
+                        Vector4[] cubicValues = ReadAnimationValues(
+                            binary,
+                            views,
+                            outputAccessor,
+                            expectedComponents);
+
+                        values = new Vector4[times.Length];
+                        inTangents = new Vector4[times.Length];
+                        outTangents = new Vector4[times.Length];
+
+                        for (int i = 0; i < times.Length; i++)
+                        {
+                            int baseIndex = i * 3;
+
+                            // glTF order: incoming tangent, value, outgoing tangent.
+                            inTangents[i] = cubicValues[baseIndex];
+                            values[i] = cubicValues[baseIndex + 1];
+                            outTangents[i] = cubicValues[baseIndex + 2];
+                        }
+                    }
+                    else
+                    {
+                        if (outputAccessor.Count != times.Length)
+                        {
+                            throw new InvalidDataException(
+                                "Animation input and output key counts do not match.");
+                        }
+
+                        values = ReadAnimationValues(
+                            binary,
+                            views,
+                            outputAccessor,
+                            expectedComponents);
+                    }
+
                     for (int i = 0; i < values.Length; i++)
                     {
                         Vector4 value = values[i];
@@ -685,6 +726,28 @@ namespace ULTRADROID.Models
                         }
                     }
 
+                    if (interpolation == ModelAnimationInterpolation.CubicSpline)
+                    {
+                        for (int i = 0; i < times.Length; i++)
+                        {
+                            Vector4 incoming = inTangents[i];
+                            Vector4 outgoing = outTangents[i];
+
+                            if (float.IsNaN(incoming.x) || float.IsInfinity(incoming.x) ||
+                                float.IsNaN(incoming.y) || float.IsInfinity(incoming.y) ||
+                                float.IsNaN(incoming.z) || float.IsInfinity(incoming.z) ||
+                                float.IsNaN(incoming.w) || float.IsInfinity(incoming.w) ||
+                                float.IsNaN(outgoing.x) || float.IsInfinity(outgoing.x) ||
+                                float.IsNaN(outgoing.y) || float.IsInfinity(outgoing.y) ||
+                                float.IsNaN(outgoing.z) || float.IsInfinity(outgoing.z) ||
+                                float.IsNaN(outgoing.w) || float.IsInfinity(outgoing.w))
+                            {
+                                throw new InvalidDataException(
+                                    "CUBICSPLINE contains an invalid tangent.");
+                            }
+                        }
+                    }
+
                     duration = Mathf.Max(duration, times[times.Length - 1]);
 
                     parsedChannels.Add(new ModelAnimationChannel
@@ -693,7 +756,9 @@ namespace ULTRADROID.Models
                         Path = animationPath,
                         Interpolation = interpolation,
                         Times = times,
-                        Values = values
+                        Values = values,
+                        InTangents = inTangents,
+                        OutTangents = outTangents
                     });
                 }
 
