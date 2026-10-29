@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -139,13 +140,46 @@ namespace ULTRADROID.Models
             string path,
             ModelLoadOptions options = null)
         {
+            ValidatePath(path);
+
+            return GlbImporter.Load(
+                path,
+                options ?? new ModelLoadOptions());
+        }
+
+        /// <summary>
+        /// Loads a GLB incrementally over multiple Unity frames.
+        /// Both callbacks execute on Unity's main thread.
+        /// </summary>
+        public static void LoadGLBAsync(
+            string path,
+            Action<ModelInstance> onCompleted,
+            Action<Exception> onError = null,
+            ModelLoadOptions options = null)
+        {
+            ValidatePath(path);
+
+            if (onCompleted == null)
+                throw new ArgumentNullException(nameof(onCompleted));
+
+            ModelLoadRunner.Begin(
+                path,
+                options ?? new ModelLoadOptions(),
+                onCompleted,
+                onError);
+        }
+
+        private static void ValidatePath(string path)
+        {
             if (string.IsNullOrWhiteSpace(path))
-                throw new ArgumentException("A GLB path is required.", nameof(path));
+                throw new ArgumentException(
+                    "A GLB path is required.",
+                    nameof(path));
 
             if (!File.Exists(path))
-                throw new FileNotFoundException("GLB file not found.", path);
-
-            return GlbImporter.Load(path, options ?? new ModelLoadOptions());
+                throw new FileNotFoundException(
+                    "GLB file not found.",
+                    path);
         }
     }
 
@@ -206,13 +240,44 @@ namespace ULTRADROID.Models
             public Material Material;
         }
 
-        internal static ModelInstance Load(string path, ModelLoadOptions options)
+        internal static ModelInstance Load(
+            string path,
+            ModelLoadOptions options)
+        {
+            ModelInstance result = null;
+
+            IEnumerator routine = LoadIncremental(
+                path,
+                options,
+                instance => result = instance);
+
+            try
+            {
+                while (routine.MoveNext())
+                {
+                    // Synchronous API: consume every loading stage immediately.
+                }
+            }
+            finally
+            {
+                (routine as IDisposable)?.Dispose();
+            }
+
+            return result;
+        }
+
+        internal static IEnumerator LoadIncremental(
+            string path,
+            ModelLoadOptions options,
+            Action<ModelInstance> onCompleted)
         {
             GameObject rootObject = null;
+            bool succeeded = false;
 
             try
             {
                 ReadGlb(path, out string json, out byte[] binary);
+                yield return null;
 
                 using (JsonDocument doc = JsonDocument.Parse(json))
                 {
@@ -228,11 +293,17 @@ namespace ULTRADROID.Models
 
                     List<BufferView> views = ReadBufferViews(gltf);
                     List<Accessor> accessors = ReadAccessors(gltf);
+                    yield return null;
+
                     List<GltfImage> images = ReadImages(
                         gltf, path, binary, views, options.LoadTextures);
+                    yield return null;
+
                     List<GltfTexture> textures = ReadTextures(gltf);
                     List<GltfMaterial> materials = ReadMaterials(
                         gltf, images, textures, options.LoadTextures);
+                    yield return null;
+
                     JsonElement meshes = RequiredArray(gltf, "meshes");
                     JsonElement nodes = OptionalArray(gltf, "nodes");
 
@@ -241,12 +312,9 @@ namespace ULTRADROID.Models
                             ? "CustomModel"
                             : options.Name);
 
-                    // Parent first, then apply the requested transform.
-                    // When Parent is supplied, Position and RotationEuler are local.
                     if (options.Parent != null)
                     {
                         rootObject.transform.SetParent(options.Parent, false);
-
                         rootObject.transform.localPosition = options.Position;
                         rootObject.transform.localRotation =
                             Quaternion.Euler(options.RotationEuler);
@@ -260,16 +328,20 @@ namespace ULTRADROID.Models
                         rootObject.transform.localScale = options.Scale;
                     }
 
-                    GameObject[] nodeObjects = new GameObject[
-                        nodes.ValueKind == JsonValueKind.Array ? nodes.GetArrayLength() : 0];
+                    yield return null;
 
-                    // Create node objects first, so children can be parented safely.
+                    GameObject[] nodeObjects = new GameObject[
+                        nodes.ValueKind == JsonValueKind.Array
+                            ? nodes.GetArrayLength()
+                            : 0];
+
                     for (int i = 0; i < nodeObjects.Length; i++)
                     {
                         JsonElement node = nodes[i];
                         string nodeName = GetString(node, "name", "Node_" + i);
                         nodeObjects[i] = new GameObject(nodeName);
                         ApplyNodeTransform(nodeObjects[i].transform, node);
+                        yield return null;
                     }
 
                     bool[] hasParent = new bool[nodeObjects.Length];
@@ -278,46 +350,64 @@ namespace ULTRADROID.Models
                     {
                         JsonElement children;
 
-                        if (!nodes[i].TryGetProperty("children", out children) ||
-                            children.ValueKind != JsonValueKind.Array)
-                            continue;
-
-                        foreach (JsonElement childElement in children.EnumerateArray())
+                        if (nodes[i].TryGetProperty("children", out children) &&
+                            children.ValueKind == JsonValueKind.Array)
                         {
-                            int child = childElement.GetInt32();
-                            if (child < 0 || child >= nodeObjects.Length)
-                                throw new InvalidDataException("Node child index is out of range.");
+                            foreach (JsonElement childElement in children.EnumerateArray())
+                            {
+                                int child = childElement.GetInt32();
 
-                            if (hasParent[child])
-                                throw new InvalidDataException("A node has multiple parents.");
+                                if (child < 0 || child >= nodeObjects.Length)
+                                    throw new InvalidDataException(
+                                        "Node child index is out of range.");
 
-                            nodeObjects[child].transform.SetParent(nodeObjects[i].transform, false);
-                            hasParent[child] = true;
+                                if (hasParent[child])
+                                    throw new InvalidDataException(
+                                        "A node has multiple parents.");
+
+                                nodeObjects[child].transform.SetParent(
+                                    nodeObjects[i].transform,
+                                    false);
+                                hasParent[child] = true;
+                            }
                         }
+
+                        yield return null;
                     }
 
                     for (int i = 0; i < nodeObjects.Length; i++)
                     {
                         if (!hasParent[i])
-                            nodeObjects[i].transform.SetParent(rootObject.transform, false);
+                        {
+                            nodeObjects[i].transform.SetParent(
+                                rootObject.transform,
+                                false);
+                        }
+
+                        yield return null;
                     }
 
                     SkinBuildData[] skins = ReadSkins(
                         gltf, binary, views, accessors, nodeObjects);
+                    yield return null;
 
                     int meshCount = 0;
 
-                    // Meshes may be referenced by nodes. Build each referenced primitive.
                     for (int i = 0; i < nodeObjects.Length; i++)
                     {
                         JsonElement node = nodes[i];
 
                         if (!node.TryGetProperty("mesh", out JsonElement meshElement))
+                        {
+                            yield return null;
                             continue;
+                        }
 
                         int meshIndex = meshElement.GetInt32();
+
                         if (meshIndex < 0 || meshIndex >= meshes.GetArrayLength())
-                            throw new InvalidDataException("Node mesh index is out of range.");
+                            throw new InvalidDataException(
+                                "Node mesh index is out of range.");
 
                         Transform[] skinBones = null;
                         Matrix4x4[] skinBindPoses = null;
@@ -332,7 +422,6 @@ namespace ULTRADROID.Models
                                     "Node skin index is out of range.");
 
                             SkinBuildData skin = skins[skinIndex];
-
                             skinBones = new Transform[skin.Joints.Length];
 
                             for (int j = 0; j < skin.Joints.Length; j++)
@@ -359,10 +448,9 @@ namespace ULTRADROID.Models
                             skinRoot);
 
                         meshCount++;
+                        yield return null;
                     }
 
-                    // Some valid files have meshes but no nodes. Render those directly
-                    // under the model root rather than returning an empty model.
                     if (nodeObjects.Length == 0)
                     {
                         for (int i = 0; i < meshes.GetArrayLength(); i++)
@@ -375,12 +463,15 @@ namespace ULTRADROID.Models
                                 materials,
                                 rootObject.transform,
                                 options);
+
                             meshCount++;
+                            yield return null;
                         }
                     }
 
                     if (meshCount == 0)
-                        throw new NotSupportedException("No node-referenced meshes were found.");
+                        throw new NotSupportedException(
+                            "No node-referenced meshes were found.");
 
                     List<ModelAnimationClip> animations = ReadAnimations(
                         gltf,
@@ -388,16 +479,21 @@ namespace ULTRADROID.Models
                         views,
                         accessors,
                         nodeObjects);
+                    yield return null;
 
-                    return new ModelInstance(rootObject, path, animations);
+                    ModelInstance instance = new ModelInstance(
+                        rootObject,
+                        path,
+                        animations);
+
+                    onCompleted(instance);
+                    succeeded = true;
                 }
             }
-            catch
+            finally
             {
-                if (rootObject != null)
+                if (!succeeded && rootObject != null)
                     UnityEngine.Object.Destroy(rootObject);
-
-                throw;
             }
         }
 
