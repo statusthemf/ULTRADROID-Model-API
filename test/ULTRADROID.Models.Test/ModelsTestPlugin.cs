@@ -34,7 +34,7 @@ namespace ULTRADROID.Models.Test
                 AddComponent<ModelTestLoader>();
 
                 Log.LogInfo(
-                    "[Models Test] Playback test suite initialized.");
+                    "[Models Test] Animation playback initialized.");
             }
             catch (Exception ex)
             {
@@ -56,26 +56,8 @@ namespace ULTRADROID.Models.Test
         private ModelInstance instance;
         private GlbAnimationPlayer animationPlayer;
 
-        // Automatic playback test state.
-        // 0 = start looping test
-        // 1 = check looping, then pause
-        // 2 = check pause, then resume
-        // 3 = check resume and test seek
-        // 4 = check half speed
-        // 5 = check reverse playback
-        // 6 = check non-looping playback
-        // 7 = all tests completed
-        private int testStage = -1;
-        private float testStageStartTime;
-        private float pausedTime;
-        private float reverseStartTime;
-        private float testDuration;
-
-        // TEST 1: Track an actual animation-time wrap.
-        private float loopPreviousTime;
-        private bool loopWrapDetected;
-
-        private bool testSuiteStarted;
+        private const string AnimationName = "dance_loop_fit";
+        private bool animationStarted;
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
         {
@@ -132,8 +114,6 @@ namespace ULTRADROID.Models.Test
                 {
                     TryLoadModel();
                 }
-
-                UpdatePlaybackTests();
             }
             catch (Exception ex)
             {
@@ -192,8 +172,7 @@ namespace ULTRADROID.Models.Test
             nextModelAttemptTime = Time.unscaledTime + 2f;
 
             currentCamera = null;
-            testSuiteStarted = false;
-            testStage = -1;
+            animationStarted = false;
 
             DestroyCurrentModel();
 
@@ -209,8 +188,7 @@ namespace ULTRADROID.Models.Test
             gameplayDetected = false;
             detectedGameplayScene = "";
             modelLoadAttempted = false;
-            testSuiteStarted = false;
-            testStage = -1;
+            animationStarted = false;
             currentCamera = null;
 
             DestroyCurrentModel();
@@ -275,9 +253,9 @@ namespace ULTRADROID.Models.Test
                 {
                     Name = "BladesOfChaosTest",
                     Parent = currentCamera.transform,
-                    Position = new Vector3(0f, 0f, 1f),
+                    Position = new Vector3(0f, 0f, 1.5f),
                     RotationEuler = Vector3.zero,
-                    Scale = new Vector3(0.1f, 0.1f, 0.1f),
+                    Scale = new Vector3(0.2f, 0.2f, 0.2f),
                     FlipUvV = true
                 };
 
@@ -318,29 +296,41 @@ namespace ULTRADROID.Models.Test
                 int animationCount = instance.Animations.Count;
 
                 ModelsTestPlugin.Log.LogInfo(
-                    "[Animation] Supported clips found: " +
-                    animationCount);
+                    "[Animation] Supported clips found: " + animationCount);
+
+                bool danceFound = false;
 
                 for (int i = 0; i < animationCount; i++)
                 {
+                    ModelAnimationClip clip = instance.Animations[i];
+
+                    if (clip == null)
+                        continue;
+
                     ModelsTestPlugin.Log.LogInfo(
                         "[Animation] Clip " + i + ": '" +
-                        instance.Animations[i].Name +
-                        "' (duration: " +
-                        instance.Animations[i].Duration +
-                        " seconds)");
+                        clip.Name + "' (duration: " +
+                        clip.Duration + " seconds)");
+
+                    if (string.Equals(
+                        clip.Name,
+                        AnimationName,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        danceFound = true;
+                    }
                 }
 
-                if (animationCount == 0)
+                if (!danceFound)
                 {
-                    ModelsTestPlugin.Log.LogWarning(
-                        "[Animation] No supported animation clips found.");
+                    ModelsTestPlugin.Log.LogError(
+                        "[Animation] Clip '" + AnimationName +
+                        "' was not found in the GLB.");
 
                     return;
                 }
 
-                animationPlayer =
-                    GlbAnimationPlayerFactory.Attach(instance);
+                animationPlayer = GlbAnimationPlayerFactory.Attach(instance);
 
                 if (animationPlayer == null)
                 {
@@ -350,383 +340,28 @@ namespace ULTRADROID.Models.Test
                     return;
                 }
 
-                testDuration = FindClipDuration("Bow");
+                animationPlayer.Loop = true;
+                animationPlayer.PlaybackSpeed = 1f;
 
-                if (testDuration <= 0f)
+                animationStarted = animationPlayer.Play(AnimationName);
+
+                if (animationStarted)
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Animation] Successfully started looping '" +
+                        AnimationName + "'.");
+                }
+                else
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Animation] Bow was not found or has invalid duration.");
-
-                    return;
+                        "[Animation] Failed to start '" + AnimationName + "'.");
                 }
-
-                ModelsTestPlugin.Log.LogInfo(
-                    "[Animation] Player attached. Bow duration: " +
-                    testDuration);
-
-                StartPlaybackTestSuite();
             }
             catch (Exception ex)
             {
                 ModelsTestPlugin.Log.LogError(
                     "[Model] LOAD FAILED: " + ex);
             }
-        }
-
-        private float FindClipDuration(string clipName)
-        {
-            for (int i = 0; i < instance.Animations.Count; i++)
-            {
-                ModelAnimationClip clip = instance.Animations[i];
-
-                if (clip != null &&
-                    string.Equals(
-                        clip.Name,
-                        clipName,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    return clip.Duration;
-                }
-            }
-
-            return 0f;
-        }
-
-        private void StartPlaybackTestSuite()
-        {
-            if (animationPlayer == null)
-                return;
-
-            testSuiteStarted = true;
-
-            ModelsTestPlugin.Log.LogInfo(
-                "========================================");
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[TEST SUITE] Starting all six playback tests.");
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[TEST SUITE] Tests will run automatically in sequence.");
-
-            // TEST 1: Normal looping.
-            animationPlayer.Loop = true;
-            animationPlayer.PlaybackSpeed = 1f;
-
-            if (!animationPlayer.Play("Bow"))
-            {
-                LogTestResult(
-                    "Normal looping",
-                    false,
-                    "Play(\"Bow\") failed.");
-
-                testStage = 7;
-                return;
-            }
-
-            testStage = 1;
-            testStageStartTime = Time.unscaledTime;
-
-            loopPreviousTime = animationPlayer.CurrentTime;
-            loopWrapDetected = false;
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[TEST 1/6] Normal looping started at speed 1x.");
-        }
-
-        private void UpdatePlaybackTests()
-        {
-            if (!testSuiteStarted ||
-                animationPlayer == null ||
-                instance == null ||
-                !instance.IsValid ||
-                testStage < 1 ||
-                testStage > 6)
-                return;
-
-            float elapsed = Time.unscaledTime - testStageStartTime;
-
-            switch (testStage)
-            {
-                case 1:
-                {
-                    float currentTime = animationPlayer.CurrentTime;
-
-                    // A looping animation should jump back toward zero
-                    // when it passes the end of the clip.
-                    if (currentTime + 0.05f < loopPreviousTime)
-                    {
-                        loopWrapDetected = true;
-                    }
-
-                    loopPreviousTime = currentTime;
-
-                    // Wait for an actual wrap, allowing extra time for
-                    // slow frames or delayed animation updates.
-                    float timeout = testDuration * 2f + 2f;
-
-                    if (!loopWrapDetected && elapsed < timeout)
-                        return;
-
-                    bool loopPassed =
-                        animationPlayer.IsPlaying &&
-                        animationPlayer.Loop &&
-                        loopWrapDetected;
-
-                    LogTestResult(
-                        "Normal looping",
-                        loopPassed,
-                        "Playing=" + animationPlayer.IsPlaying +
-                        ", Loop=" + animationPlayer.Loop +
-                        ", Time=" + animationPlayer.CurrentTime +
-                        ", Wrap detected=" + loopWrapDetected +
-                        ", Elapsed=" + elapsed);
-
-                    // TEST 2: Pause.
-                    animationPlayer.Pause();
-                    pausedTime = animationPlayer.CurrentTime;
-
-                    testStage = 2;
-                    testStageStartTime = Time.unscaledTime;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[TEST 2/6] Paused at time " + pausedTime + ".");
-
-                    return;
-                }
-
-                case 2:
-                {
-                    // Leave the player paused long enough to check stability.
-                    if (elapsed < 0.6f)
-                        return;
-
-                    float pauseDifference = Mathf.Abs(
-                        animationPlayer.CurrentTime - pausedTime);
-
-                    bool pausePassed =
-                        !animationPlayer.IsPlaying &&
-                        pauseDifference <= 0.05f;
-
-                    LogTestResult(
-                        "Pause",
-                        pausePassed,
-                        "Playing=" + animationPlayer.IsPlaying +
-                        ", Time difference=" + pauseDifference);
-
-                    // TEST 3: Resume.
-                    animationPlayer.Resume();
-
-                    testStage = 3;
-                    testStageStartTime = Time.unscaledTime;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[TEST 3/6] Resumed playback.");
-
-                    return;
-                }
-
-                case 3:
-                {
-                    if (elapsed < 0.6f)
-                        return;
-
-                    float resumeDifference = Mathf.Abs(
-                        animationPlayer.CurrentTime - pausedTime);
-
-                    bool resumePassed =
-                        animationPlayer.IsPlaying &&
-                        resumeDifference > 0.05f;
-
-                    LogTestResult(
-                        "Resume",
-                        resumePassed,
-                        "Playing=" + animationPlayer.IsPlaying +
-                        ", Time difference from paused pose=" +
-                        resumeDifference);
-
-                    // TEST 4: Seek to the middle of the clip.
-                    animationPlayer.Pause();
-
-                    float seekTarget = testDuration * 0.5f;
-                    animationPlayer.Seek(seekTarget);
-
-                    float seekDifference = Mathf.Abs(
-                        animationPlayer.CurrentTime - seekTarget);
-
-                    bool seekPassed = seekDifference <= 0.05f;
-
-                    LogTestResult(
-                        "Seek",
-                        seekPassed,
-                        "Target=" + seekTarget +
-                        ", Actual=" + animationPlayer.CurrentTime +
-                        ", Difference=" + seekDifference);
-
-                    // TEST 5: Half speed.
-                    animationPlayer.Loop = true;
-                    animationPlayer.PlaybackSpeed = 0.5f;
-
-                    if (!animationPlayer.Play("Bow"))
-                    {
-                        LogTestResult(
-                            "Half speed",
-                            false,
-                            "Play(\"Bow\") failed.");
-
-                        testStage = 7;
-                        return;
-                    }
-
-                    testStage = 4;
-                    testStageStartTime = Time.unscaledTime;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[TEST 5/6] Playing Bow at half speed.");
-
-                    return;
-                }
-
-                case 4:
-                {
-                    // One second of real time should advance roughly 0.5
-                    // seconds of animation time at speed 0.5.
-                    if (elapsed < 1f)
-                        return;
-
-                    float halfSpeedTime = animationPlayer.CurrentTime;
-
-                    bool halfSpeedPassed =
-                        animationPlayer.IsPlaying &&
-                        halfSpeedTime >= 0.25f &&
-                        halfSpeedTime <= 0.85f;
-
-                    LogTestResult(
-                        "Half speed",
-                        halfSpeedPassed,
-                        "Expected about 0.5 seconds; actual=" +
-                        halfSpeedTime);
-
-                    // TEST 6: Reverse playback.
-                    animationPlayer.Loop = true;
-                    animationPlayer.PlaybackSpeed = 1f;
-                    animationPlayer.Play("Bow");
-
-                    reverseStartTime = testDuration * 0.75f;
-                    animationPlayer.Seek(reverseStartTime);
-                    animationPlayer.PlaybackSpeed = -1f;
-
-                    testStage = 5;
-                    testStageStartTime = Time.unscaledTime;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[TEST 6/6] Reverse playback started from time " +
-                        reverseStartTime + ".");
-
-                    return;
-                }
-
-                case 5:
-                {
-                    if (elapsed < 0.5f)
-                        return;
-
-                    float reverseCurrentTime =
-                        animationPlayer.CurrentTime;
-
-                    bool reversePassed =
-                        animationPlayer.IsPlaying &&
-                        reverseCurrentTime < reverseStartTime &&
-                        reverseCurrentTime >= 0f;
-
-                    LogTestResult(
-                        "Reverse playback",
-                        reversePassed,
-                        "Start=" + reverseStartTime +
-                        ", Actual=" + reverseCurrentTime +
-                        ", Speed=" + animationPlayer.PlaybackSpeed);
-
-                    // TEST 7: Non-looping playback.
-                    animationPlayer.Loop = false;
-                    animationPlayer.PlaybackSpeed = 1f;
-
-                    if (!animationPlayer.Play("Bow"))
-                    {
-                        LogTestResult(
-                            "Non-looping playback",
-                            false,
-                            "Play(\"Bow\") failed.");
-
-                        testStage = 7;
-                        FinishPlaybackTestSuite();
-                        return;
-                    }
-
-                    testStage = 6;
-                    testStageStartTime = Time.unscaledTime;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[TEST 7/7] Non-looping playback started.");
-
-                    return;
-                }
-
-                case 6:
-                {
-                    // Allow the full clip to finish.
-                    if (elapsed < testDuration + 0.5f)
-                        return;
-
-                    float finalTime = animationPlayer.CurrentTime;
-
-                    bool nonLoopPassed =
-                        !animationPlayer.IsPlaying &&
-                        Mathf.Abs(finalTime - testDuration) <= 0.05f;
-
-                    LogTestResult(
-                        "Non-looping playback",
-                        nonLoopPassed,
-                        "Playing=" + animationPlayer.IsPlaying +
-                        ", Final time=" + finalTime +
-                        ", Duration=" + testDuration);
-
-                    testStage = 7;
-                    FinishPlaybackTestSuite();
-
-                    return;
-                }
-            }
-        }
-
-        private void LogTestResult(
-            string testName,
-            bool passed,
-            string details)
-        {
-            string result = passed ? "PASS" : "FAIL";
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[TEST RESULT] " + result + " - " +
-                testName + " | " + details);
-        }
-
-        private void FinishPlaybackTestSuite()
-        {
-            if (animationPlayer != null)
-            {
-                // Leave the model in a predictable state after testing.
-                animationPlayer.Loop = true;
-                animationPlayer.PlaybackSpeed = 1f;
-                animationPlayer.Play("Bow");
-            }
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[TEST SUITE] All playback tests have finished.");
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[TEST SUITE] Review the PASS/FAIL entries above.");
-
-            ModelsTestPlugin.Log.LogInfo(
-                "========================================");
         }
 
         public void OnDestroy()
@@ -737,6 +372,7 @@ namespace ULTRADROID.Models.Test
         private void DestroyCurrentModel()
         {
             animationPlayer = null;
+            animationStarted = false;
 
             if (instance == null)
                 return;
