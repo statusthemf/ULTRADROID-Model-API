@@ -817,25 +817,30 @@ namespace ULTRADROID.Models
             return result;
         }
 
-        private static void ReadGlb(string path, out string json, out byte[] binary)
+        private static void ReadGlb(
+            string path,
+            out string json,
+            out byte[] binary)
         {
-            byte[] bytes = File.ReadAllBytes(path);
-
-            if (bytes.Length < 20)
-                throw new InvalidDataException("GLB file is too short.");
-
-            using (MemoryStream stream = new MemoryStream(bytes))
+            using (FileStream stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.Read))
             using (BinaryReader reader = new BinaryReader(stream))
             {
+                if (stream.Length < 20)
+                    throw new InvalidDataException("GLB file is too short.");
+
                 if (reader.ReadUInt32() != GlbMagic)
                     throw new InvalidDataException("Invalid GLB magic.");
 
                 if (reader.ReadUInt32() != 2)
-                    throw new InvalidDataException("Only GLB version 2 is supported.");
+                    throw new InvalidDataException(
+                        "Only GLB version 2 is supported.");
 
                 uint declaredLength = reader.ReadUInt32();
-                if (declaredLength != bytes.Length)
-                    throw new InvalidDataException("GLB declared length does not match file length.");
+
+                if (declaredLength != stream.Length)
+                    throw new InvalidDataException(
+                        "GLB declared length does not match file length.");
 
                 json = null;
                 binary = null;
@@ -846,21 +851,37 @@ namespace ULTRADROID.Models
                     uint type = reader.ReadUInt32();
 
                     if (length > stream.Length - stream.Position)
-                        throw new InvalidDataException("Invalid GLB chunk length.");
+                        throw new InvalidDataException(
+                            "Invalid GLB chunk length.");
+
+                    if (length > int.MaxValue)
+                        throw new InvalidDataException(
+                            "GLB chunk is too large to load.");
 
                     byte[] chunk = reader.ReadBytes((int)length);
 
+                    if (chunk.Length != (int)length)
+                        throw new EndOfStreamException(
+                            "Unexpected end of GLB file.");
+
                     if (type == JsonChunk)
-                        json = Encoding.UTF8.GetString(chunk).TrimEnd('\0', ' ', '\t', '\r', '\n');
+                    {
+                        json = Encoding.UTF8.GetString(chunk)
+                            .TrimEnd('\0', ' ', '\t', '\r', '\n');
+                    }
                     else if (type == BinChunk)
+                    {
                         binary = chunk;
+                    }
                 }
 
                 if (string.IsNullOrEmpty(json))
-                    throw new InvalidDataException("GLB JSON chunk is missing.");
+                    throw new InvalidDataException(
+                        "GLB JSON chunk is missing.");
 
                 if (binary == null)
-                    throw new InvalidDataException("GLB binary chunk is missing.");
+                    throw new InvalidDataException(
+                        "GLB binary chunk is missing.");
             }
         }
 
