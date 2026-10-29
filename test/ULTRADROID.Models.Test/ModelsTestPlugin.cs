@@ -71,6 +71,10 @@ namespace ULTRADROID.Models.Test
         private float reverseStartTime;
         private float testDuration;
 
+        // TEST 1: Track an actual animation-time wrap.
+        private float loopPreviousTime;
+        private bool loopWrapDetected;
+
         private bool testSuiteStarted;
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
@@ -422,6 +426,9 @@ namespace ULTRADROID.Models.Test
             testStage = 1;
             testStageStartTime = Time.unscaledTime;
 
+            loopPreviousTime = animationPlayer.CurrentTime;
+            loopWrapDetected = false;
+
             ModelsTestPlugin.Log.LogInfo(
                 "[TEST 1/6] Normal looping started at speed 1x.");
         }
@@ -442,22 +449,37 @@ namespace ULTRADROID.Models.Test
             {
                 case 1:
                 {
-                    // Wait longer than one complete animation cycle.
-                    if (elapsed < testDuration + 0.5f)
+                    float currentTime = animationPlayer.CurrentTime;
+
+                    // A looping animation should jump back toward zero
+                    // when it passes the end of the clip.
+                    if (currentTime + 0.05f < loopPreviousTime)
+                    {
+                        loopWrapDetected = true;
+                    }
+
+                    loopPreviousTime = currentTime;
+
+                    // Wait for an actual wrap, allowing extra time for
+                    // slow frames or delayed animation updates.
+                    float timeout = testDuration * 2f + 2f;
+
+                    if (!loopWrapDetected && elapsed < timeout)
                         return;
 
                     bool loopPassed =
                         animationPlayer.IsPlaying &&
                         animationPlayer.Loop &&
-                        animationPlayer.CurrentTime >= 0f &&
-                        animationPlayer.CurrentTime < testDuration * 0.5f;
+                        loopWrapDetected;
 
                     LogTestResult(
                         "Normal looping",
                         loopPassed,
                         "Playing=" + animationPlayer.IsPlaying +
                         ", Loop=" + animationPlayer.Loop +
-                        ", Time=" + animationPlayer.CurrentTime);
+                        ", Time=" + animationPlayer.CurrentTime +
+                        ", Wrap detected=" + loopWrapDetected +
+                        ", Elapsed=" + elapsed);
 
                     // TEST 2: Pause.
                     animationPlayer.Pause();
