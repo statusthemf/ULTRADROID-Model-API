@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -189,6 +190,23 @@ namespace ULTRADROID.Models
         private const uint JsonChunk = 0x4E4F534A;
         private const uint BinChunk = 0x004E4942;
 
+        internal sealed class PreparedGlb : IDisposable
+        {
+            internal string SourcePath;
+            internal ModelLoadOptions Options;
+            internal JsonDocument Document;
+            internal byte[] Binary;
+            internal byte[][] ImageBytes;
+
+            public void Dispose()
+            {
+                Document?.Dispose();
+                Document = null;
+                Binary = null;
+                ImageBytes = null;
+            }
+        }
+
         private sealed class BufferView
         {
             public int Offset;
@@ -240,46 +258,91 @@ namespace ULTRADROID.Models
             public Material Material;
         }
 
+        internal static PreparedGlb Prepare(
+            string path,
+            ModelLoadOptions options)
+        {
+            ReadGlb(path, out string json, out byte[] binary);
+            JsonDocument document = JsonDocument.Parse(json);
+
+            try
+            {
+                JsonElement gltf = document.RootElement;
+
+                if (!gltf.TryGetProperty("asset", out JsonElement asset) ||
+                    !asset.TryGetProperty("version", out JsonElement version) ||
+                    version.GetString() == null ||
+                    !version.GetString().StartsWith(
+                        "2.", StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        "Invalid glTF 2.x asset metadata.");
+                }
+
+                byte[][] imageBytes = ExtractImageBytes(
+                    gltf,
+                    path,
+                    binary,
+                    ReadBufferViews(gltf),
+                    options.LoadTextures);
+
+                return new PreparedGlb
+                {
+                    SourcePath = path,
+                    Options = options,
+                    Document = document,
+                    Binary = binary,
+                    ImageBytes = imageBytes
+                };
+            }
+            catch
+            {
+                document.Dispose();
+                throw;
+            }
+        }
+
         internal static ModelInstance Load(
             string path,
             ModelLoadOptions options)
         {
-            ModelInstance result = null;
-
-            IEnumerator routine = LoadIncremental(
-                path,
-                options,
-                instance => result = instance);
-
-            try
+            using (PreparedGlb prepared = Prepare(path, options))
             {
-                while (routine.MoveNext())
+                ModelInstance result = null;
+
+                IEnumerator routine = LoadIncremental(
+                    prepared,
+                    instance => result = instance);
+
+                try
                 {
-                    // Synchronous API: consume every loading stage immediately.
+                    while (routine.MoveNext())
+                    {
+                        // Synchronous API: consume every loading stage immediately.
+                    }
                 }
-            }
-            finally
-            {
-                (routine as IDisposable)?.Dispose();
-            }
+                finally
+                {
+                    (routine as IDisposable)?.Dispose();
+                }
 
-            return result;
+                return result;
+            }
         }
 
         internal static IEnumerator LoadIncremental(
-            string path,
-            ModelLoadOptions options,
+            PreparedGlb prepared,
             Action<ModelInstance> onCompleted)
         {
+            string path = prepared.SourcePath;
+            ModelLoadOptions options = prepared.Options;
+            byte[] binary = prepared.Binary;
             GameObject rootObject = null;
             bool succeeded = false;
 
             try
             {
-                ReadGlb(path, out string json, out byte[] binary);
-                yield return null;
-
-                using (JsonDocument doc = JsonDocument.Parse(json))
+                using (JsonDocument doc = prepared.Document)
                 {
                     JsonElement gltf = doc.RootElement;
 
@@ -295,9 +358,21 @@ namespace ULTRADROID.Models
                     List<Accessor> accessors = ReadAccessors(gltf);
                     yield return null;
 
-                    List<GltfImage> images = ReadImages(
-                        gltf, path, binary, views, options.LoadTextures);
-                    yield return null;
+                    List<GltfImage> images = null;
+                    IEnumerator imageRoutine = CreateImagesIncremental(
+                        gltf,
+                        prepared.ImageBytes,
+                        result => images = result);
+
+                    try
+                    {
+                        while (imageRoutine.MoveNext())
+                            yield return imageRoutine.Current;
+                    }
+                    finally
+                    {
+                        (imageRoutine as IDisposable)?.Dispose();
+                    }
 
                     List<GltfTexture> textures = ReadTextures(gltf);
                     List<GltfMaterial> materials = ReadMaterials(
@@ -1727,6 +1802,187 @@ namespace ULTRADROID.Models
             throw new NotSupportedException(
                 "No supported lit shader was found. " +
                 "Check the Unity render pipeline and available game shaders.");
+        }
+
+        private static byte[][] ExtractImageBytes(
+            JsonElement gltf,
+            string glbPath,
+            byte[] binary,
+            List<BufferView> views,
+            bool loadTextures)
+        {
+            JsonElement images = OptionalArray(gltf, "images");
+
+            if (images.ValueKind != JsonValueKind.Array)
+                return new byte[0][];
+
+            byte[][] result = new byte[images.GetArrayLength()][];
+
+            if (!loadTextures)
+                return result;
+
+            string directory = Path.GetDirectoryName(Path.GetFullPath(glbPath));
+            string directoryPrefix = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+
+            for (int i = 0; i < result.Length; i++)
+            {
+                JsonElement imageData = images[i];
+
+                if (imageData.TryGetProperty(
+                        "bufferView", out JsonElement viewElement))
+                {
+                    int viewIndex = viewElement.GetInt32();
+
+                    if (viewIndex < 0 || viewIndex >= views.Count)
+                        throw new InvalidDataException(
+                            "Image bufferView index is out of range.");
+
+                    BufferView view = views[viewIndex];
+                    long viewEnd = (long)view.Offset + view.Length;
+
+                    if (view.Offset < 0 || view.Length < 0 ||
+                        viewEnd > binary.Length)
+                    {
+                        throw new InvalidDataException(
+                            "Image bufferView exceeds the binary chunk.");
+                    }
+
+                    byte[] bytes = new byte[view.Length];
+                    Buffer.BlockCopy(binary, view.Offset, bytes, 0, view.Length);
+                    result[i] = bytes;
+                }
+                else if (imageData.TryGetProperty(
+                             "uri", out JsonElement uriElement))
+                {
+                    string uri = uriElement.GetString();
+
+                    if (string.IsNullOrWhiteSpace(uri))
+                        throw new InvalidDataException("Image URI is empty.");
+
+                    if (uri.StartsWith(
+                            "data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int comma = uri.IndexOf(',');
+
+                        if (comma < 0 ||
+                            uri.IndexOf(
+                                ";base64", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            throw new NotSupportedException(
+                                "Only base64 data URIs are supported for images.");
+                        }
+
+                        result[i] = Convert.FromBase64String(
+                            uri.Substring(comma + 1));
+                    }
+                    else
+                    {
+                        if (Uri.IsWellFormedUriString(uri, UriKind.Absolute))
+                        {
+                            Uri absoluteUri = new Uri(uri);
+
+                            if (!absoluteUri.IsFile)
+                                throw new NotSupportedException(
+                                    "Remote image URLs are not supported.");
+
+                            uri = absoluteUri.LocalPath;
+                        }
+
+                        string decoded = Uri.UnescapeDataString(uri);
+                        string fullPath = Path.GetFullPath(
+                            Path.Combine(directory, decoded));
+
+                        StringComparison pathComparison =
+                            Path.DirectorySeparatorChar == '\\'
+                                ? StringComparison.OrdinalIgnoreCase
+                                : StringComparison.Ordinal;
+
+                        if (!fullPath.StartsWith(
+                                directoryPrefix, pathComparison))
+                        {
+                            throw new InvalidDataException(
+                                "Image URI points outside the model directory.");
+                        }
+
+                        result[i] = File.ReadAllBytes(fullPath);
+                    }
+                }
+                else
+                {
+                    throw new InvalidDataException(
+                        "Image has neither a URI nor a bufferView.");
+                }
+            }
+
+            return result;
+        }
+
+        private static IEnumerator CreateImagesIncremental(
+            JsonElement gltf,
+            byte[][] imageBytes,
+            Action<List<GltfImage>> onCompleted)
+        {
+            List<GltfImage> images = new List<GltfImage>();
+            JsonElement imageArray = OptionalArray(gltf, "images");
+
+            if (imageArray.ValueKind != JsonValueKind.Array)
+            {
+                onCompleted(images);
+                yield break;
+            }
+
+            int count = imageArray.GetArrayLength();
+
+            if (imageBytes == null || imageBytes.Length != count)
+            {
+                throw new InvalidDataException(
+                    "Prepared image data does not match the glTF image array.");
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                GltfImage image = new GltfImage();
+                byte[] bytes = imageBytes[i];
+
+                if (bytes != null)
+                {
+                    if (bytes.Length == 0)
+                        throw new InvalidDataException("Image data is empty.");
+
+                    Texture2D texture = new Texture2D(
+                        2, 2, TextureFormat.RGBA32, true);
+
+                    texture.name = GetString(
+                        imageArray[i], "name", "GLTF_Image");
+
+                    try
+                    {
+                        if (!ImageConversion.LoadImage(texture, bytes, false))
+                        {
+                            throw new InvalidDataException(
+                                "Unity could not decode a GLTF image.");
+                        }
+
+                        texture.wrapMode = TextureWrapMode.Repeat;
+                        texture.filterMode = FilterMode.Bilinear;
+                        texture.anisoLevel = 4;
+
+                        image.Texture = texture;
+                    }
+                    catch
+                    {
+                        UnityEngine.Object.Destroy(texture);
+                        throw;
+                    }
+                }
+
+                images.Add(image);
+                yield return null;
+            }
+
+            onCompleted(images);
         }
 
         private static List<GltfImage> ReadImages(
