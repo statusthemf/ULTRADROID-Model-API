@@ -1059,6 +1059,7 @@ namespace ULTRADROID.Models
             bool anyHaveTangents = false;
             bool allHaveNormals = true;
             bool allHaveTangents = true;
+            bool requiresTangents = false;
             int totalVertices = 0;
 
             Material defaultMaterial = null;
@@ -1271,6 +1272,13 @@ namespace ULTRADROID.Models
                     primitiveMaterial = defaultMaterial;
                 }
 
+                if (primitiveMaterial != null &&
+                    primitiveMaterial.HasProperty("_BumpMap") &&
+                    primitiveMaterial.GetTexture("_BumpMap") != null)
+                {
+                    requiresTangents = true;
+                }
+
                 PrimitiveBuildData data = new PrimitiveBuildData
                 {
                     Vertices = vertices,
@@ -1425,7 +1433,8 @@ namespace ULTRADROID.Models
             {
                 unityMesh.tangents = allTangents.ToArray();
             }
-            else if (anyHaveUVChannel[0] &&
+            else if (requiresTangents &&
+                     anyHaveUVChannel[0] &&
                      allUVChannels[0].Count == totalVertices)
             {
                 unityMesh.RecalculateTangents();
