@@ -1283,30 +1283,19 @@ namespace ULTRADROID.Models
             if (totalVertices > 65535)
                 unityMesh.indexFormat = IndexFormat.UInt32;
 
-            Il2CppSystem.Collections.Generic.List<Vector3> il2cppVertices =
-                new Il2CppSystem.Collections.Generic.List<Vector3>();
-
-            for (int i = 0; i < allVertices.Count; i++)
-                il2cppVertices.Add(allVertices[i]);
-
-            unityMesh.SetVertices(il2cppVertices);
+            // Upload managed arrays directly instead of populating IL2CPP lists
+            // one element at a time.
+            unityMesh.vertices = allVertices.ToArray();
             unityMesh.subMeshCount = builtPrimitives.Count;
 
             for (int i = 0; i < submeshTriangles.Count; i++)
             {
-                unityMesh.SetTriangles(
-                    submeshTriangles[i], i, false);
+                unityMesh.SetTriangles(submeshTriangles[i], i, false);
             }
 
             if (allHaveNormals && allNormals.Count == totalVertices)
             {
-                Il2CppSystem.Collections.Generic.List<Vector3> il2cppNormals =
-                    new Il2CppSystem.Collections.Generic.List<Vector3>();
-
-                for (int i = 0; i < allNormals.Count; i++)
-                    il2cppNormals.Add(allNormals[i]);
-
-                unityMesh.SetNormals(il2cppNormals);
+                unityMesh.normals = allNormals.ToArray();
             }
             else
             {
@@ -1319,6 +1308,8 @@ namespace ULTRADROID.Models
                     allUVChannels[channel].Count != totalVertices)
                     continue;
 
+                // Keep the existing IL2CPP list path for UVs until
+                // the target Unity bindings are verified.
                 Il2CppSystem.Collections.Generic.List<Vector2> il2cppUVs =
                     new Il2CppSystem.Collections.Generic.List<Vector2>();
 
@@ -1330,30 +1321,17 @@ namespace ULTRADROID.Models
 
             if (anyHaveColors && allColors.Count == totalVertices)
             {
-                Il2CppSystem.Collections.Generic.List<Color> il2cppColors =
-                    new Il2CppSystem.Collections.Generic.List<Color>();
-
-                for (int i = 0; i < allColors.Count; i++)
-                    il2cppColors.Add(allColors[i]);
-
-                unityMesh.SetColors(il2cppColors);
+                unityMesh.colors = allColors.ToArray();
             }
 
             if (anyHaveTangents && allHaveTangents &&
                 allTangents.Count == totalVertices)
             {
-                Il2CppSystem.Collections.Generic.List<Vector4> il2cppTangents =
-                    new Il2CppSystem.Collections.Generic.List<Vector4>();
-
-                for (int i = 0; i < allTangents.Count; i++)
-                    il2cppTangents.Add(allTangents[i]);
-
-                unityMesh.SetTangents(il2cppTangents);
+                unityMesh.tangents = allTangents.ToArray();
             }
             else if (anyHaveUVChannel[0] &&
                      allUVChannels[0].Count == totalVertices)
             {
-                // Generate tangents when imported tangents are absent or incomplete.
                 unityMesh.RecalculateTangents();
             }
 
@@ -2392,11 +2370,17 @@ namespace ULTRADROID.Models
                 throw new NotSupportedException(
                     "Sparse or buffer-less accessors are not supported yet.");
 
+            if (elementSize <= 0)
+                throw new InvalidDataException("Invalid accessor element size.");
+
             BufferView view = views[accessor.View];
 
-            if (view.Offset < 0 || view.Length < 0 || accessor.Offset < 0 ||
-                accessor.Count < 0)
-                throw new InvalidDataException("Invalid accessor or bufferView values.");
+            if (view.Offset < 0 || view.Length < 0 ||
+                accessor.Offset < 0 || accessor.Count < 0)
+            {
+                throw new InvalidDataException(
+                    "Invalid accessor or bufferView values.");
+            }
 
             int stride = view.Stride > 0 ? view.Stride : elementSize;
 
@@ -2408,20 +2392,48 @@ namespace ULTRADROID.Models
                 ? start
                 : start + (long)(accessor.Count - 1) * stride + elementSize;
 
+            long viewEnd = (long)view.Offset + view.Length;
+
             if (start < view.Offset ||
-                end > (long)view.Offset + view.Length ||
+                start > viewEnd ||
+                end > viewEnd ||
                 end > binary.Length)
-                throw new InvalidDataException("Accessor exceeds its bufferView.");
+            {
+                throw new InvalidDataException(
+                    "Accessor exceeds its bufferView.");
+            }
 
-            byte[] result = new byte[checked(accessor.Count * elementSize)];
+            int outputLength = checked(accessor.Count * elementSize);
+            byte[] result = new byte[outputLength];
 
-            for (int i = 0; i < accessor.Count; i++)
+            if (accessor.Count == 0)
+                return result;
+
+            int sourceOffset = checked((int)start);
+
+            // Fast path: copy tightly packed accessor data in one operation.
+            if (stride == elementSize)
+            {
                 Buffer.BlockCopy(
                     binary,
-                    checked((int)(start + (long)i * stride)),
+                    sourceOffset,
+                    result,
+                    0,
+                    outputLength);
+
+                return result;
+            }
+
+            // Fallback: handle interleaved vertex attributes.
+            for (int i = 0; i < accessor.Count; i++)
+            {
+                Buffer.BlockCopy(
+                    binary,
+                    checked(sourceOffset + i * stride),
                     result,
                     i * elementSize,
                     elementSize);
+            }
 
             return result;
         }
