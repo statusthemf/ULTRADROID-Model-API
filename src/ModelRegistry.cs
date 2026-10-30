@@ -40,6 +40,20 @@ namespace ULTRADROID.Models
             if (string.IsNullOrEmpty(modelId))
                 return;
 
+            if (Models.TryGetValue(
+                modelId,
+                out ModelInstance instance))
+            {
+                if (instance != null &&
+                    !string.IsNullOrEmpty(instance.OwnerId) &&
+                    Owners.TryGetValue(
+                        instance.OwnerId,
+                        out ModelOwner owner))
+                {
+                    owner.Unregister(modelId);
+                }
+            }
+
             Models.Remove(modelId);
         }
 
@@ -130,9 +144,7 @@ namespace ULTRADROID.Models
             }
 
             foreach (string id in invalidIds)
-            {
-                Models.Remove(id);
-            }
+                Unregister(id);
         }
     }
 }
