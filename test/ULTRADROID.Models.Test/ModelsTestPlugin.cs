@@ -1222,7 +1222,7 @@ namespace ULTRADROID.Models.Test
             AddTestButton(
                 "ULTRADROID.Models.ToggleAllAnimations",
                 "ANIM ON/OFF",
-                new Vector2(0f, 450f),
+                new Vector2(0f, 0f),
                 ToggleAllAnimations);
 
             AddTestButton(
