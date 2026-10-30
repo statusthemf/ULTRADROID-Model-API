@@ -87,77 +87,167 @@ namespace ULTRADROID.Models
 
     public sealed class ModelInstance
     {
-        public GameObject Root { get; }
+        public string Id { get; }
+        public string OwnerId { get; }
         public string SourcePath { get; }
+
+        public GameObject Root { get; }
+
         public bool IsValid => Root != null;
+
         public IReadOnlyList<ModelAnimationClip> Animations { get; }
+
+        private bool _destroyRequested;
 
         internal ModelInstance(
             GameObject root,
             string path,
-            List<ModelAnimationClip> animations)
+            List<ModelAnimationClip> animations,
+            ModelOwner owner)
         {
+            Id = Guid.NewGuid().ToString("N");
+            OwnerId = owner != null ? owner.Id : null;
+
             Root = root;
             SourcePath = path;
-            Animations = animations ?? new List<ModelAnimationClip>();
+
+            Animations = animations ??
+                new List<ModelAnimationClip>();
+
+            ModelRegistry.Register(this);
+            owner?.Register(this);
         }
 
         public void SetPosition(Vector3 position)
         {
-            if (Root != null)
+            if (IsValid)
                 Root.transform.position = position;
         }
 
-        public void SetRotation(Vector3 rotation)
+        public void SetLocalPosition(Vector3 position)
         {
-            if (Root != null)
-                Root.transform.rotation = Quaternion.Euler(rotation);
+            if (IsValid)
+                Root.transform.localPosition = position;
+        }
+
+        public void SetRotation(Vector3 rotationEuler)
+        {
+            if (IsValid)
+                Root.transform.rotation =
+                    Quaternion.Euler(rotationEuler);
+        }
+
+        public void SetLocalRotation(Vector3 rotationEuler)
+        {
+            if (IsValid)
+                Root.transform.localRotation =
+                    Quaternion.Euler(rotationEuler);
         }
 
         public void SetScale(Vector3 scale)
         {
-            if (Root != null)
+            if (IsValid)
                 Root.transform.localScale = scale;
         }
 
-        public void SetParent(Transform parent)
+        public void SetParent(
+            Transform parent,
+            bool worldPositionStays = true)
         {
-            if (Root != null)
-                Root.transform.SetParent(parent, true);
+            if (IsValid)
+                Root.transform.SetParent(
+                    parent,
+                    worldPositionStays);
         }
 
         public void Destroy()
         {
-            if (Root != null)
+            if (_destroyRequested)
+                return;
+
+            _destroyRequested = true;
+
+            ModelRegistry.Unregister(Id);
+
+            if (IsValid)
                 UnityEngine.Object.Destroy(Root);
         }
     }
 
     public static class ModelAPI
     {
-        public const string Version = "0.2.0";
+        public const string Version = "0.3.0";
+
+        public static ModelOwner CreateOwner(string pluginId)
+        {
+            if (string.IsNullOrWhiteSpace(pluginId))
+                throw new ArgumentException(
+                    "A plugin ID is required.",
+                    nameof(pluginId));
+
+            ModelOwner owner = new ModelOwner(
+                pluginId + ":" + Guid.NewGuid().ToString("N"));
+
+            owner.RegisterWithRegistry();
+
+            return owner;
+        }
+
+        public static ModelInstance GetModel(string modelId)
+        {
+            return ModelRegistry.GetModel(modelId);
+        }
+
+        public static IReadOnlyList<ModelInstance> GetModels()
+        {
+            return ModelRegistry.GetModels();
+        }
 
         public static ModelInstance LoadGLB(
             string path,
             ModelLoadOptions options = null)
         {
-            ValidatePath(path);
-
-            return GlbImporter.Load(
-                path,
-                options ?? new ModelLoadOptions());
+            return LoadGLB(path, options, null);
         }
 
-        /// <summary>
-        /// Loads a GLB incrementally over multiple Unity frames.
-        /// Both callbacks execute on Unity's main thread.
-        /// </summary>
+        public static ModelInstance LoadGLB(
+            string path,
+            ModelLoadOptions options,
+            ModelOwner owner)
+        {
+            ValidateOwner(owner);
+            ValidatePath(path);
+
+            ModelInstance instance = GlbImporter.Load(
+                path,
+                options ?? new ModelLoadOptions(),
+                owner);
+
+            return instance;
+        }
+
         public static void LoadGLBAsync(
             string path,
             Action<ModelInstance> onCompleted,
             Action<Exception> onError = null,
             ModelLoadOptions options = null)
         {
+            LoadGLBAsync(
+                path,
+                onCompleted,
+                onError,
+                options,
+                null);
+        }
+
+        public static void LoadGLBAsync(
+            string path,
+            Action<ModelInstance> onCompleted,
+            Action<Exception> onError,
+            ModelLoadOptions options,
+            ModelOwner owner)
+        {
+            ValidateOwner(owner);
             ValidatePath(path);
 
             if (onCompleted == null)
@@ -167,7 +257,13 @@ namespace ULTRADROID.Models
                 path,
                 options ?? new ModelLoadOptions(),
                 onCompleted,
-                onError);
+                onError,
+                owner);
+        }
+
+        private static void ValidateOwner(ModelOwner owner)
+        {
+            owner?.ThrowIfDisposed();
         }
 
         private static void ValidatePath(string path)
@@ -304,7 +400,8 @@ namespace ULTRADROID.Models
 
         internal static ModelInstance Load(
             string path,
-            ModelLoadOptions options)
+            ModelLoadOptions options,
+            ModelOwner owner)
         {
             using (PreparedGlb prepared = Prepare(path, options))
             {
@@ -312,7 +409,8 @@ namespace ULTRADROID.Models
 
                 IEnumerator routine = LoadIncremental(
                     prepared,
-                    instance => result = instance);
+                    instance => result = instance,
+                    owner);
 
                 try
                 {
@@ -332,7 +430,8 @@ namespace ULTRADROID.Models
 
         internal static IEnumerator LoadIncremental(
             PreparedGlb prepared,
-            Action<ModelInstance> onCompleted)
+            Action<ModelInstance> onCompleted,
+            ModelOwner owner)
         {
             string path = prepared.SourcePath;
             ModelLoadOptions options = prepared.Options;
@@ -559,7 +658,8 @@ namespace ULTRADROID.Models
                     ModelInstance instance = new ModelInstance(
                         rootObject,
                         path,
-                        animations);
+                        animations,
+                        owner);
 
                     onCompleted(instance);
                     succeeded = true;
