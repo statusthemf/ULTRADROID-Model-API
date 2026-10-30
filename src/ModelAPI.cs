@@ -1557,6 +1557,7 @@ namespace ULTRADROID.Models
                 renderer.bones = skinBones;
                 renderer.rootBone = skinRoot;
                 renderer.sharedMaterials = submeshMaterials.ToArray();
+                LogRendererDiagnostics(renderer);
 
                 renderer.updateWhenOffscreen = true;
             }
@@ -1569,6 +1570,7 @@ namespace ULTRADROID.Models
                     meshObject.AddComponent<MeshRenderer>();
 
                 renderer.sharedMaterials = submeshMaterials.ToArray();
+                LogRendererDiagnostics(renderer);
             }
 
             if (options.CreateColliders && skinBones == null)
@@ -1752,6 +1754,105 @@ namespace ULTRADROID.Models
             }
 
             return result;
+        }
+
+        private static void LogRendererDiagnostics(Renderer renderer)
+        {
+            if (renderer == null)
+                return;
+
+            RenderPipelineAsset pipeline =
+                GraphicsSettings.currentRenderPipeline;
+
+            Debug.Log(
+                "[ULTRADROID Lighting] Render Pipeline: " +
+                (pipeline != null
+                    ? pipeline.GetType().FullName
+                    : "Built-in"));
+
+            Debug.Log(
+                "[ULTRADROID Lighting] Ambient Mode: " +
+                RenderSettings.ambientMode +
+                " | Ambient Intensity: " +
+                RenderSettings.ambientIntensity +
+                " | Ambient Light: " +
+                RenderSettings.ambientLight);
+
+            Debug.Log(
+                "[ULTRADROID Lighting] Renderer: " +
+                renderer.name +
+                " | Receive Shadows: " +
+                renderer.receiveShadows +
+                " | Cast Shadows: " +
+                renderer.shadowCastingMode +
+                " | Light Probes: " +
+                renderer.lightProbeUsage +
+                " | Reflection Probes: " +
+                renderer.reflectionProbeUsage);
+
+            Material[] materials = renderer.sharedMaterials;
+
+            for (int i = 0; i < materials.Length; i++)
+            {
+                Material material = materials[i];
+
+                if (material == null)
+                    continue;
+
+                Shader shader = material.shader;
+
+                Debug.Log(
+                    "[ULTRADROID Lighting] Material " + i +
+                    ": " + material.name +
+                    " | Shader: " +
+                    (shader != null ? shader.name : "NULL") +
+                    " | Supported: " +
+                    (shader != null && shader.isSupported));
+
+                string[] properties =
+                {
+                    "_Color",
+                    "_BaseColor",
+                    "_Metallic",
+                    "_Smoothness",
+                    "_Glossiness",
+                    "_EmissionColor",
+                    "_BumpMap",
+                    "_MetallicGlossMap",
+                    "_MainTex",
+                    "_BaseMap"
+                };
+
+                foreach (string property in properties)
+                {
+                    if (!material.HasProperty(property))
+                        continue;
+
+                    if (property.Contains("Color"))
+                    {
+                        Debug.Log(
+                            "[ULTRADROID Lighting] " +
+                            property + " = " +
+                            material.GetColor(property));
+                    }
+                    else if (property.Contains("Map"))
+                    {
+                        Texture texture = material.GetTexture(property);
+
+                        Debug.Log(
+                            "[ULTRADROID Lighting] " +
+                            property + " = " +
+                            (texture != null ? texture.name : "NULL"));
+                    }
+                    else
+                    {
+                        Debug.Log(
+                            "[ULTRADROID Lighting] " +
+                            property + " = " +
+                            material.GetFloat(property));
+                    }
+                }
+            }
         }
 
         private static Material CreateDefaultMaterial()
