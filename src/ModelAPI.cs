@@ -1871,6 +1871,17 @@ namespace ULTRADROID.Models
                         ? bumpTex.GetInstanceID() + " | " +
                           bumpTex.width + "x" + bumpTex.height
                         : "NULL"));
+
+                // TEMPORARY LIGHTING TEST: Disable material emission.
+                if (material.HasProperty("_EmissionColor"))
+                {
+                    material.SetColor("_EmissionColor", Color.black);
+                    material.DisableKeyword("_EMISSION");
+
+                    Debug.LogError(
+                        "[ULTRADROID Lighting] TEST: Disabled emission on " +
+                        material.name);
+                }
             }
         }
         catch (Exception ex)
