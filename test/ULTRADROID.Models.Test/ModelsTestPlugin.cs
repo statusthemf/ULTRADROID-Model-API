@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
@@ -55,6 +56,8 @@ namespace ULTRADROID.Models.Test
 
         private bool gameplayDetected;
         private bool modelLoadAttempted;
+        private float nextNativeWeaponDiagnosticTime;
+        private bool nativeWeaponDiagnosticsCompleted;
 
         private Camera currentCamera;
         private ModelInstance instance;
@@ -125,6 +128,15 @@ namespace ULTRADROID.Models.Test
                     OnGameplaySceneDetected(candidate);
                 }
 
+                if (!nativeWeaponDiagnosticsCompleted &&
+                    Time.unscaledTime >= nextNativeWeaponDiagnosticTime)
+                {
+                    nextNativeWeaponDiagnosticTime =
+                        Time.unscaledTime + 3f;
+
+                    LogNativeWeaponDiagnostics();
+                }
+
                 if (!modelLoadAttempted &&
                     Time.unscaledTime >= nextModelAttemptTime)
                 {
@@ -184,6 +196,9 @@ namespace ULTRADROID.Models.Test
             detectedGameplayScene = sceneName;
             gameplayDetected = true;
             modelLoadAttempted = false;
+            nativeWeaponDiagnosticsCompleted = false;
+            nextNativeWeaponDiagnosticTime =
+                Time.unscaledTime + 3f;
 
             nextModelAttemptTime = Time.unscaledTime + 2f;
 
@@ -375,6 +390,172 @@ namespace ULTRADROID.Models.Test
 
             ModelsTestPlugin.Log.LogInfo(
                 "[Animation] Previous and Next touch buttons registered.");
+        }
+
+        private void LogNativeWeaponDiagnostics()
+        {
+            try
+            {
+                Component[] components =
+                    Resources.FindObjectsOfTypeAll<Component>();
+
+                Component gunControl = null;
+
+                foreach (Component component in components)
+                {
+                    if (component == null)
+                        continue;
+
+                    if (!string.Equals(
+                        component.GetType().Name,
+                        "GunControl",
+                        StringComparison.Ordinal))
+                        continue;
+
+                    if (!component.gameObject.scene.IsValid())
+                        continue;
+
+                    gunControl = component;
+                    break;
+                }
+
+                if (gunControl == null)
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Native Weapon] GunControl not found yet.");
+
+                    return;
+                }
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Native Weapon] Found GunControl: " +
+                    gunControl.name +
+                    " | Type: " + gunControl.GetType().FullName);
+
+                FieldInfo weaponField = gunControl.GetType().GetField(
+                    "currentWeapon",
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
+
+                if (weaponField == null)
+                {
+                    ModelsTestPlugin.Log.LogError(
+                        "[Native Weapon] currentWeapon field not found.");
+
+                    return;
+                }
+
+                object currentWeapon = weaponField.GetValue(gunControl);
+
+                if (currentWeapon == null)
+                {
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Native Weapon] currentWeapon is currently NULL.");
+
+                    return;
+                }
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Native Weapon] Current weapon object: " +
+                    currentWeapon +
+                    " | Runtime type: " +
+                    currentWeapon.GetType().FullName);
+
+                Component weaponComponent = currentWeapon as Component;
+
+                if (weaponComponent == null)
+                {
+                    ModelsTestPlugin.Log.LogWarning(
+                        "[Native Weapon] Current weapon is not directly " +
+                        "accessible as a Unity Component. No materials modified.");
+
+                    return;
+                }
+
+                Renderer[] renderers =
+                    weaponComponent.GetComponentsInChildren<Renderer>(true);
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Native Weapon] Renderer count: " + renderers.Length);
+
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    Renderer renderer = renderers[i];
+
+                    if (renderer == null)
+                        continue;
+
+                    ModelsTestPlugin.Log.LogInfo(
+                        "[Native Weapon] Renderer " + i +
+                        ": " + renderer.name +
+                        " | Type: " + renderer.GetType().Name);
+
+                    Material[] materials = renderer.sharedMaterials;
+
+                    for (int j = 0; j < materials.Length; j++)
+                    {
+                        Material material = materials[j];
+
+                        if (material == null)
+                            continue;
+
+                        Shader shader = material.shader;
+
+                        ModelsTestPlugin.Log.LogInfo(
+                            "[Native Weapon] Material " + j +
+                            ": " + material.name +
+                            " | Shader: " +
+                            (shader != null ? shader.name : "NULL") +
+                            " | Supported: " +
+                            (shader != null && shader.isSupported));
+
+                        string[] properties =
+                        {
+                            "_Metallic",
+                            "_Glossiness",
+                            "_Smoothness",
+                            "_Mode",
+                            "_EmissionColor",
+                            "_Color",
+                            "_BaseColor"
+                        };
+
+                        foreach (string property in properties)
+                        {
+                            if (!material.HasProperty(property))
+                                continue;
+
+                            if (property.Contains("Color"))
+                            {
+                                ModelsTestPlugin.Log.LogInfo(
+                                    "[Native Weapon] " + property +
+                                    " = " + material.GetColor(property));
+                            }
+                            else
+                            {
+                                ModelsTestPlugin.Log.LogInfo(
+                                    "[Native Weapon] " + property +
+                                    " = " + material.GetFloat(property));
+                            }
+                        }
+
+                        ModelsTestPlugin.Log.LogInfo(
+                            "[Native Weapon] Keywords: " +
+                            string.Join(", ", material.shaderKeywords));
+                    }
+                }
+
+                nativeWeaponDiagnosticsCompleted = true;
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Native Weapon] Diagnostics completed.");
+            }
+            catch (Exception ex)
+            {
+                ModelsTestPlugin.Log.LogError(
+                    "[Native Weapon] Diagnostics failed: " + ex);
+            }
         }
 
         private void TryLoadModel()
