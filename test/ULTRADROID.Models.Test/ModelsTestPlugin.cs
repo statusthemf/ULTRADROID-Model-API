@@ -262,7 +262,7 @@ namespace ULTRADROID.Models.Test
             {
                 Name = "BladesOfChaosTest_" + index,
                 Parent = currentCamera.transform,
-                Position = new Vector3(index * 0.35f, 0f, 1.5f),
+                Position = new Vector3(0f, 0f, 1.5f),
                 RotationEuler = Vector3.zero,
                 Scale = new Vector3(0.2f, 0.2f, 0.2f),
                 FlipUvV = true
@@ -387,7 +387,7 @@ namespace ULTRADROID.Models.Test
 
         private void SpawnAdditionalModel()
         {
-            SpawnModel(false);
+            SpawnModel(true);
         }
 
         // ---------------------------------------------------------
