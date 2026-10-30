@@ -72,8 +72,13 @@ namespace ULTRADROID.Models.Test
         private readonly List<ModelInstance> models =
             new List<ModelInstance>();
 
+        private readonly List<GlbAnimationPlayer> animationPlayers =
+            new List<GlbAnimationPlayer>();
+
         private ModelInstance instance;
         private GlbAnimationPlayer animationPlayer;
+
+        private bool animationsEnabled = true;
 
         private const string AnimationName = "dance_loop_fit";
         private const float DefaultTransitionDuration = 0.35f;
@@ -786,7 +791,9 @@ namespace ULTRADROID.Models.Test
             models.Clear();
             instance = null;
             animationPlayer = null;
+            animationPlayers.Clear();
             animationStarted = false;
+            animationsEnabled = true;
             animationNames.Clear();
             currentAnimationIndex = -1;
 
@@ -857,7 +864,9 @@ namespace ULTRADROID.Models.Test
             models.Clear();
             instance = null;
             animationPlayer = null;
+            animationPlayers.Clear();
             animationStarted = false;
+            animationsEnabled = true;
             animationNames.Clear();
             currentAnimationIndex = -1;
 
@@ -935,7 +944,9 @@ namespace ULTRADROID.Models.Test
                 models.Clear();
                 instance = null;
                 animationPlayer = null;
+                animationPlayers.Clear();
                 animationStarted = false;
+                animationsEnabled = true;
                 animationNames.Clear();
                 currentAnimationIndex = -1;
 
@@ -1003,8 +1014,9 @@ namespace ULTRADROID.Models.Test
                 return;
             }
 
+            animationPlayers.Add(animationPlayer);
             animationPlayer.Loop = true;
-            animationPlayer.PlaybackSpeed = 1f;
+            animationPlayer.PlaybackSpeed = animationsEnabled ? 1f : 0f;
 
             int initialIndex = animationNames.FindIndex(
                 name => string.Equals(
@@ -1029,7 +1041,7 @@ namespace ULTRADROID.Models.Test
             string clipName = animationNames[index];
 
             animationPlayer.Loop = true;
-            animationPlayer.PlaybackSpeed = 1f;
+            animationPlayer.PlaybackSpeed = animationsEnabled ? 1f : 0f;
 
             bool played;
 
@@ -1121,6 +1133,24 @@ namespace ULTRADROID.Models.Test
                 TestLayerAnimation);
         }
 
+        private void ToggleAllAnimations()
+        {
+            animationsEnabled = !animationsEnabled;
+
+            foreach (GlbAnimationPlayer player in animationPlayers)
+            {
+                if (player == null)
+                    continue;
+
+                player.PlaybackSpeed = animationsEnabled ? 1f : 0f;
+            }
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Performance Test] Animations: " +
+                (animationsEnabled ? "ENABLED" : "DISABLED") +
+                " | Players: " + animationPlayers.Count);
+        }
+
         // ---------------------------------------------------------
         // TOUCH BUTTON REGISTRATION
         // ---------------------------------------------------------
@@ -1188,6 +1218,12 @@ namespace ULTRADROID.Models.Test
                 "SCALE",
                 new Vector2(240f, 180f),
                 ScaleLatestModel);
+
+            AddTestButton(
+                "ULTRADROID.Models.ToggleAllAnimations",
+                "ANIM ON/OFF",
+                new Vector2(0f, 450f),
+                ToggleAllAnimations);
 
             AddTestButton(
                 "ULTRADROID.Models.Lookup",
@@ -1277,7 +1313,9 @@ namespace ULTRADROID.Models.Test
             DisposeTestButtons();
 
             animationPlayer = null;
+            animationPlayers.Clear();
             animationStarted = false;
+            animationsEnabled = true;
             testLayerEnabled = false;
 
             animationNames.Clear();
