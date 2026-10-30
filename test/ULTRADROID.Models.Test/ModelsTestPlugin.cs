@@ -198,7 +198,7 @@ namespace ULTRADROID.Models.Test
             modelLoadAttempted = false;
             nativeWeaponDiagnosticsCompleted = false;
             nextNativeWeaponDiagnosticTime =
-                Time.unscaledTime + 3f;
+                Time.unscaledTime + 4f;
 
             nextModelAttemptTime = Time.unscaledTime + 2f;
 
