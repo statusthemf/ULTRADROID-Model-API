@@ -1770,7 +1770,7 @@ namespace ULTRADROID.Models
 
             try
             {
-                Debug.Log(
+                Debug.LogError(
                     "[ULTRADROID Lighting] Renderer: " +
                     renderer.name +
                     " | Receive Shadows: " +
@@ -1793,7 +1793,7 @@ namespace ULTRADROID.Models
 
                     Shader shader = material.shader;
 
-                    Debug.Log(
+                    Debug.LogError(
                         "[ULTRADROID Lighting] Material " + i +
                         ": " + material.name +
                         " | Shader: " +
@@ -1822,7 +1822,7 @@ namespace ULTRADROID.Models
 
                         if (property.Contains("Color"))
                         {
-                            Debug.Log(
+                            Debug.LogError(
                                 "[ULTRADROID Lighting] " +
                                 property + " = " +
                                 material.GetColor(property));
@@ -1833,14 +1833,14 @@ namespace ULTRADROID.Models
                         {
                             Texture texture = material.GetTexture(property);
 
-                            Debug.Log(
+                            Debug.LogError(
                                 "[ULTRADROID Lighting] " +
                                 property + " = " +
                                 (texture != null ? texture.name : "NULL"));
                         }
                         else
                         {
-                            Debug.Log(
+                            Debug.LogError(
                                 "[ULTRADROID Lighting] " +
                                 property + " = " +
                                 material.GetFloat(property));
@@ -1850,7 +1850,7 @@ namespace ULTRADROID.Models
             }
             catch (Exception ex)
             {
-                Debug.LogWarning(
+                Debug.LogError(
                     "[ULTRADROID Lighting] Diagnostics failed: " +
                     ex);
             }
