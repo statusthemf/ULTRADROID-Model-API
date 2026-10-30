@@ -131,9 +131,6 @@ namespace ULTRADROID.Models.Test
                 if (!nativeWeaponDiagnosticsCompleted &&
                     Time.unscaledTime >= nextNativeWeaponDiagnosticTime)
                 {
-                    nextNativeWeaponDiagnosticTime =
-                        Time.unscaledTime + 3f;
-
                     LogNativeWeaponDiagnostics();
                 }
 
@@ -394,13 +391,20 @@ namespace ULTRADROID.Models.Test
 
         private void LogNativeWeaponDiagnostics()
         {
-            GunControl gunControl =
-                UnityEngine.Object.FindObjectOfType<GunControl>();
+            Type gunControlType = null;
 
-            if (gunControl == null)
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                gunControlType = assembly.GetType("GunControl");
+
+                if (gunControlType != null)
+                    break;
+            }
+
+            if (gunControlType == null)
             {
                 ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] GunControl not found. Retrying in 2 seconds.");
+                    "[Native Weapon] GunControl type not found. Retrying in 2 seconds.");
 
                 nextNativeWeaponDiagnosticTime =
                     Time.unscaledTime + 2f;
@@ -408,14 +412,44 @@ namespace ULTRADROID.Models.Test
                 return;
             }
 
-            ModelsTestPlugin.Log.LogInfo("[Native Weapon] GunControl found!");
+            UnityEngine.Object gunControlObject =
+                UnityEngine.Object.FindObjectOfType(gunControlType);
 
-            object currentWeapon = gunControl.currentWeapon;
+            if (gunControlObject == null)
+            {
+                ModelsTestPlugin.Log.LogWarning(
+                    "[Native Weapon] GunControl instance not found. Retrying in 2 seconds.");
+
+                nextNativeWeaponDiagnosticTime =
+                    Time.unscaledTime + 2f;
+
+                return;
+            }
+
+            ModelsTestPlugin.Log.LogInfo("[Native Weapon] GunControl instance found!");
+
+            FieldInfo weaponField = gunControlType.GetField(
+                "currentWeapon",
+                BindingFlags.Instance |
+                BindingFlags.Public |
+                BindingFlags.NonPublic);
+
+            if (weaponField == null)
+            {
+                ModelsTestPlugin.Log.LogError(
+                    "[Native Weapon] currentWeapon field not found.");
+
+                nativeWeaponDiagnosticsCompleted = true;
+                return;
+            }
+
+            object currentWeapon =
+                weaponField.GetValue(gunControlObject);
 
             if (currentWeapon == null)
             {
                 ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] currentWeapon is null.");
+                    "[Native Weapon] currentWeapon is null. Retrying in 2 seconds.");
 
                 nextNativeWeaponDiagnosticTime =
                     Time.unscaledTime + 2f;
@@ -427,17 +461,12 @@ namespace ULTRADROID.Models.Test
                 "[Native Weapon] Current weapon type: " +
                 currentWeapon.GetType().FullName);
 
-            ModelsTestPlugin.Log.LogInfo(
-                "[Native Weapon] Current weapon: " +
-                currentWeapon);
-
             Component weaponComponent = currentWeapon as Component;
 
             if (weaponComponent == null)
             {
                 ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] currentWeapon is not a Component. " +
-                    "We need to inspect its actual runtime type.");
+                    "[Native Weapon] Current weapon is not a Component.");
 
                 nativeWeaponDiagnosticsCompleted = true;
                 return;
@@ -454,7 +483,7 @@ namespace ULTRADROID.Models.Test
                 ModelsTestPlugin.Log.LogInfo(
                     "[Native Weapon] Renderer: " + renderer.name);
 
-                foreach (Material material in renderer.materials)
+                foreach (Material material in renderer.sharedMaterials)
                 {
                     if (material == null)
                         continue;
