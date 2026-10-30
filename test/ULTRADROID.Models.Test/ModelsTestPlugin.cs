@@ -61,6 +61,7 @@ namespace ULTRADROID.Models.Test
         private GlbAnimationPlayer animationPlayer;
 
         private const string AnimationName = "dance_loop_fit";
+        private const float DefaultTransitionDuration = 0.35f;
         private bool animationStarted;
         private int currentAnimationIndex = -1;
 
@@ -249,7 +250,9 @@ namespace ULTRADROID.Models.Test
 
             if (animationStarted)
             {
-                played = animationPlayer.CrossFade(clipName, 0.35f);
+                played = animationPlayer.CrossFade(
+                    clipName,
+                    DefaultTransitionDuration);
             }
             else
             {
