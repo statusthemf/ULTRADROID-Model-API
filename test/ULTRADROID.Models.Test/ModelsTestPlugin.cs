@@ -71,6 +71,9 @@ namespace ULTRADROID.Models.Test
 
         private ButtonHandle previousAnimationButton;
         private ButtonHandle nextAnimationButton;
+        private ButtonHandle layerToggleButton;
+        private bool testLayerEnabled;
+        private const string TestLayerAnimation = "wave";
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
         {
@@ -299,6 +302,43 @@ namespace ULTRADROID.Models.Test
             PlayAnimationAtIndex(previousIndex);
         }
 
+        private void ToggleTestLayer()
+        {
+            if (animationPlayer == null || !animationStarted)
+                return;
+
+            if (testLayerEnabled)
+            {
+                animationPlayer.ClearLayers();
+                testLayerEnabled = false;
+
+                ModelsTestPlugin.Log.LogInfo(
+                    "[Animation Layer] Test layer disabled.");
+
+                return;
+            }
+
+            animationPlayer.SetLayer(
+                TestLayerAnimation,
+                0.8f,
+                new string[]
+                {
+                    "Armature",
+                    "Spine",
+                    "Chest",
+                    "UpperArm.L",
+                    "UpperArm.R",
+                    "Forearm.L",
+                    "Forearm.R"
+                });
+
+            testLayerEnabled = true;
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Animation Layer] Test layer enabled: " +
+                TestLayerAnimation);
+        }
+
         private void RegisterAnimationButtons()
         {
             previousAnimationButton =
@@ -321,6 +361,16 @@ namespace ULTRADROID.Models.Test
                     ScaleMultiplier = 1f,
                     ApplyTint = false,
                     OnClick = PlayNextAnimation
+                });
+
+            layerToggleButton =
+                ULTRADROIDControls.AddButton(new ButtonConfig
+                {
+                    Id = "ULTRADROID.Models.ToggleAnimationLayer",
+                    Label = "LAYER",
+                    PositionOffset = new Vector2(0f, 180f),
+                    ScaleMultiplier = 1f,
+                    OnClick = ToggleTestLayer
                 });
 
             ModelsTestPlugin.Log.LogInfo(
@@ -483,6 +533,14 @@ namespace ULTRADROID.Models.Test
                 nextAnimationButton.Dispose();
                 nextAnimationButton = null;
             }
+
+            if (layerToggleButton != null)
+            {
+                layerToggleButton.Dispose();
+                layerToggleButton = null;
+            }
+
+            testLayerEnabled = false;
 
             animationNames.Clear();
             currentAnimationIndex = -1;
