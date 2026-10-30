@@ -1763,7 +1763,9 @@ namespace ULTRADROID.Models
             return result;
         }
 
-        private static void LogRendererDiagnostics(Renderer renderer)
+        private static void LogRendererDiagnostics(
+            Renderer renderer,
+            bool disableEmission = true)
         {
             if (renderer == null)
                 return;
@@ -1873,7 +1875,8 @@ namespace ULTRADROID.Models
                         : "NULL"));
 
                 // TEMPORARY LIGHTING TEST: Disable material emission.
-                if (material.HasProperty("_EmissionColor"))
+                if (disableEmission &&
+                    material.HasProperty("_EmissionColor"))
                 {
                     material.SetColor("_EmissionColor", Color.black);
                     material.DisableKeyword("_EMISSION");
