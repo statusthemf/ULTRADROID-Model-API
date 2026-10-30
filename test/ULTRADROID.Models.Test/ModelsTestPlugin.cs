@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
@@ -56,8 +55,6 @@ namespace ULTRADROID.Models.Test
 
         private bool gameplayDetected;
         private bool modelLoadAttempted;
-        private float nextNativeWeaponDiagnosticTime;
-        private bool nativeWeaponDiagnosticsCompleted;
 
         private Camera currentCamera;
         private ModelInstance instance;
@@ -128,12 +125,6 @@ namespace ULTRADROID.Models.Test
                     OnGameplaySceneDetected(candidate);
                 }
 
-                if (!nativeWeaponDiagnosticsCompleted &&
-                    Time.unscaledTime >= nextNativeWeaponDiagnosticTime)
-                {
-                    LogNativeWeaponDiagnostics();
-                }
-
                 if (!modelLoadAttempted &&
                     Time.unscaledTime >= nextModelAttemptTime)
                 {
@@ -193,9 +184,6 @@ namespace ULTRADROID.Models.Test
             detectedGameplayScene = sceneName;
             gameplayDetected = true;
             modelLoadAttempted = false;
-            nativeWeaponDiagnosticsCompleted = false;
-            nextNativeWeaponDiagnosticTime =
-                Time.unscaledTime + 4f;
 
             nextModelAttemptTime = Time.unscaledTime + 2f;
 
@@ -389,155 +377,6 @@ namespace ULTRADROID.Models.Test
                 "[Animation] Previous and Next touch buttons registered.");
         }
 
-        private UnityEngine.Object FindIl2CppObjectByTypeName(string typeName)
-        {
-            UnityEngine.Object[] objects =
-                Resources.FindObjectsOfTypeAll<UnityEngine.Object>();
-
-            foreach (UnityEngine.Object obj in objects)
-            {
-                if (obj == null)
-                    continue;
-
-                if (obj.GetType().Name == typeName)
-                    return obj;
-            }
-
-            return null;
-        }
-
-        private void LogNativeWeaponDiagnostics()
-        {
-            Type gunControlType = null;
-
-            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                gunControlType = assembly.GetType("GunControl");
-
-                if (gunControlType != null)
-                    break;
-            }
-
-            if (gunControlType == null)
-            {
-                ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] GunControl type not found. Retrying in 2 seconds.");
-
-                nextNativeWeaponDiagnosticTime =
-                    Time.unscaledTime + 2f;
-
-                return;
-            }
-
-            UnityEngine.Object gunControlObject =
-                FindIl2CppObjectByTypeName("GunControl");
-
-            if (gunControlObject == null)
-            {
-                ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] GunControl instance not found. Retrying in 2 seconds.");
-
-                nextNativeWeaponDiagnosticTime =
-                    Time.unscaledTime + 2f;
-
-                return;
-            }
-
-            ModelsTestPlugin.Log.LogInfo("[Native Weapon] GunControl instance found!");
-
-            FieldInfo weaponField = gunControlType.GetField(
-                "currentWeapon",
-                BindingFlags.Instance |
-                BindingFlags.Public |
-                BindingFlags.NonPublic);
-
-            if (weaponField == null)
-            {
-                ModelsTestPlugin.Log.LogError(
-                    "[Native Weapon] currentWeapon field not found.");
-
-                nativeWeaponDiagnosticsCompleted = true;
-                return;
-            }
-
-            object currentWeapon =
-                weaponField.GetValue(gunControlObject);
-
-            if (currentWeapon == null)
-            {
-                ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] currentWeapon is null. Retrying in 2 seconds.");
-
-                nextNativeWeaponDiagnosticTime =
-                    Time.unscaledTime + 2f;
-
-                return;
-            }
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[Native Weapon] Current weapon type: " +
-                currentWeapon.GetType().FullName);
-
-            Component weaponComponent = currentWeapon as Component;
-
-            if (weaponComponent == null)
-            {
-                ModelsTestPlugin.Log.LogWarning(
-                    "[Native Weapon] Current weapon is not a Component.");
-
-                nativeWeaponDiagnosticsCompleted = true;
-                return;
-            }
-
-            Renderer[] renderers =
-                weaponComponent.GetComponentsInChildren<Renderer>(true);
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[Native Weapon] Renderer count: " + renderers.Length);
-
-            foreach (Renderer renderer in renderers)
-            {
-                ModelsTestPlugin.Log.LogInfo(
-                    "[Native Weapon] Renderer: " + renderer.name);
-
-                foreach (Material material in renderer.sharedMaterials)
-                {
-                    if (material == null)
-                        continue;
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[Native Weapon] Material: " + material.name +
-                        " | Shader: " +
-                        (material.shader != null
-                            ? material.shader.name
-                            : "NULL"));
-
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[Native Weapon] Metallic=" +
-                        (material.HasProperty("_Metallic")
-                            ? material.GetFloat("_Metallic").ToString()
-                            : "N/A") +
-                        " | Glossiness=" +
-                        (material.HasProperty("_Glossiness")
-                            ? material.GetFloat("_Glossiness").ToString()
-                            : "N/A") +
-                        " | Smoothness=" +
-                        (material.HasProperty("_Smoothness")
-                            ? material.GetFloat("_Smoothness").ToString()
-                            : "N/A") +
-                        " | Emission=" +
-                        (material.HasProperty("_EmissionColor")
-                            ? material.GetColor("_EmissionColor").ToString()
-                            : "N/A"));
-                }
-            }
-
-            nativeWeaponDiagnosticsCompleted = true;
-
-            ModelsTestPlugin.Log.LogInfo(
-                "[Native Weapon] Material diagnostics completed.");
-        }
-
         private void TryLoadModel()
         {
             if (!File.Exists(ModelsTestPlugin.ModelPath))
@@ -589,22 +428,6 @@ namespace ULTRADROID.Models.Test
 
                     return;
                 }
-
-                SkinnedMeshRenderer[] skinned =
-                    instance.Root.GetComponentsInChildren
-                        <SkinnedMeshRenderer>(true);
-
-                MeshRenderer[] staticMeshes =
-                    instance.Root.GetComponentsInChildren
-                        <MeshRenderer>(true);
-
-                ModelsTestPlugin.Log.LogInfo(
-                    "[Animation Debug] Skinned renderers: " +
-                    skinned.Length);
-
-                ModelsTestPlugin.Log.LogInfo(
-                    "[Animation Debug] Static mesh renderers: " +
-                    staticMeshes.Length);
 
                 ModelsTestPlugin.Log.LogInfo(
                     "[Model] GLB loaded successfully: " +
