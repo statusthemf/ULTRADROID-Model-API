@@ -1803,16 +1803,16 @@ namespace ULTRADROID.Models
 
                     string[] properties =
                     {
+                        "_Metallic",
+                        "_Glossiness",
+                        "_Smoothness",
+                        "_Mode",
+                        "_EmissionColor",
                         "_Color",
                         "_BaseColor",
-                        "_Metallic",
-                        "_Smoothness",
-                        "_Glossiness",
-                        "_EmissionColor",
-                        "_BumpMap",
-                        "_MetallicGlossMap",
                         "_MainTex",
-                        "_BaseMap"
+                        "_BumpMap",
+                        "_MetallicGlossMap"
                     };
 
                     foreach (string property in properties)
@@ -1827,7 +1827,9 @@ namespace ULTRADROID.Models
                                 property + " = " +
                                 material.GetColor(property));
                         }
-                        else if (property.Contains("Map"))
+                        else if (
+                            property.EndsWith("Map") ||
+                            property.EndsWith("Tex"))
                         {
                             Texture texture = material.GetTexture(property);
 
