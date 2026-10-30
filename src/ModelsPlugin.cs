@@ -7,7 +7,7 @@ namespace ULTRADROID.Models
     [BepInPlugin(
         "somerandommaid.ultradroid.models",
         "ULTRADROID Models API",
-        "0.2.0")]
+        "0.3.0")]
     public sealed class ModelsPlugin : BasePlugin
     {
         internal static ManualLogSource PluginLogger;
@@ -15,7 +15,7 @@ namespace ULTRADROID.Models
         public override void Load()
         {
             PluginLogger = Log;
-            Log.LogInfo("ULTRADROID Models API 0.2.0 loaded.");
+            Log.LogInfo("ULTRADROID Models API 0.3.0 loaded.");
         }
     }
 }
