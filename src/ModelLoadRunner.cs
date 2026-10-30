@@ -16,6 +16,7 @@ namespace ULTRADROID.Models
         private Action<ModelInstance> _onCompleted;
         private Action<Exception> _onError;
         private ModelInstance _loadedModel;
+        private ModelOwner _owner;
 
         public ModelLoadRunner(IntPtr ptr)
             : base(ptr)
@@ -35,7 +36,8 @@ namespace ULTRADROID.Models
             string path,
             ModelLoadOptions options,
             Action<ModelInstance> onCompleted,
-            Action<Exception> onError)
+            Action<Exception> onError,
+            ModelOwner owner)
         {
             Register();
 
@@ -51,17 +53,20 @@ namespace ULTRADROID.Models
                 path,
                 options,
                 onCompleted,
-                onError);
+                onError,
+                owner);
         }
 
         private void Initialize(
             string path,
             ModelLoadOptions options,
             Action<ModelInstance> onCompleted,
-            Action<Exception> onError)
+            Action<Exception> onError,
+            ModelOwner owner)
         {
             _onCompleted = onCompleted;
             _onError = onError;
+            _owner = owner;
 
             _prepareTask = Task.Run(
                 () => GlbImporter.Prepare(path, options));
@@ -97,7 +102,8 @@ namespace ULTRADROID.Models
                     _prepared = completedTask.GetAwaiter().GetResult();
                     _routine = GlbImporter.LoadIncremental(
                         _prepared,
-                        instance => _loadedModel = instance);
+                        instance => _loadedModel = instance,
+                        _owner);
                 }
                 catch (Exception exception)
                 {
@@ -133,8 +139,24 @@ namespace ULTRADROID.Models
 
             ModelInstance model = _loadedModel;
             Action<ModelInstance> callback = _onCompleted;
+            Action<Exception> errorCallback = _onError;
+
+            if (_owner != null && _owner.IsDisposed)
+            {
+                model?.Destroy();
+
+                ClearCallbacks();
+
+                errorCallback?.Invoke(
+                    new OperationCanceledException(
+                        "The model owner was disposed before loading completed."));
+
+                UnityEngine.Object.Destroy(gameObject);
+                return;
+            }
 
             ClearCallbacks();
+
             UnityEngine.Object.Destroy(gameObject);
 
             callback?.Invoke(model);
@@ -190,6 +212,7 @@ namespace ULTRADROID.Models
             _onCompleted = null;
             _onError = null;
             _loadedModel = null;
+            _owner = null;
         }
 
         private void OnDestroy()
