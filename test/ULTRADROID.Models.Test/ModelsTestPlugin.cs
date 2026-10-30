@@ -5,6 +5,7 @@ using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime.Injection;
 using ULTRADROID.Models;
+using ULTRADROID.API;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -15,6 +16,9 @@ namespace ULTRADROID.Models.Test
         "ULTRADROID Models Test",
         "0.3.2")]
     [BepInDependency("somerandommaid.ultradroid.models")]
+    [BepInDependency(
+        ULTRADROIDControls.PluginGuid,
+        BepInDependency.DependencyFlags.HardDependency)]
     public class ModelsTestPlugin : BasePlugin
     {
         internal static ManualLogSource Log;
@@ -58,6 +62,14 @@ namespace ULTRADROID.Models.Test
 
         private const string AnimationName = "dance_loop_fit";
         private bool animationStarted;
+        private int currentAnimationIndex = -1;
+
+        private readonly System.Collections.Generic.List<string>
+            animationNames =
+                new System.Collections.Generic.List<string>();
+
+        private ButtonHandle previousAnimationButton;
+        private ButtonHandle nextAnimationButton;
 
         public ModelTestLoader(IntPtr ptr) : base(ptr)
         {
@@ -221,6 +233,86 @@ namespace ULTRADROID.Models.Test
             return null;
         }
 
+        private bool PlayAnimationAtIndex(int index)
+        {
+            if (animationPlayer == null ||
+                index < 0 ||
+                index >= animationNames.Count)
+                return false;
+
+            string clipName = animationNames[index];
+
+            animationPlayer.Loop = true;
+            animationPlayer.PlaybackSpeed = 1f;
+
+            if (!animationPlayer.Play(clipName))
+            {
+                ModelsTestPlugin.Log.LogError(
+                    "[Animation] Failed to play: " + clipName);
+
+                return false;
+            }
+
+            currentAnimationIndex = index;
+            animationStarted = true;
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Animation] Now playing: " + clipName);
+
+            return true;
+        }
+
+        private void PlayNextAnimation()
+        {
+            if (animationNames.Count < 2)
+                return;
+
+            int nextIndex =
+                (currentAnimationIndex + 1) % animationNames.Count;
+
+            PlayAnimationAtIndex(nextIndex);
+        }
+
+        private void PlayPreviousAnimation()
+        {
+            if (animationNames.Count < 2)
+                return;
+
+            int previousIndex =
+                (currentAnimationIndex - 1 + animationNames.Count)
+                % animationNames.Count;
+
+            PlayAnimationAtIndex(previousIndex);
+        }
+
+        private void RegisterAnimationButtons()
+        {
+            previousAnimationButton =
+                ULTRADROIDControls.AddButton(new ButtonConfig
+                {
+                    Id = "ULTRADROID.Models.PreviousAnimation",
+                    Label = "PREV ANIM",
+                    PositionOffset = new Vector2(-120f, 90f),
+                    ScaleMultiplier = 1f,
+                    ApplyTint = false,
+                    OnClick = PlayPreviousAnimation
+                });
+
+            nextAnimationButton =
+                ULTRADROIDControls.AddButton(new ButtonConfig
+                {
+                    Id = "ULTRADROID.Models.NextAnimation",
+                    Label = "NEXT ANIM",
+                    PositionOffset = new Vector2(120f, 90f),
+                    ScaleMultiplier = 1f,
+                    ApplyTint = false,
+                    OnClick = PlayNextAnimation
+                });
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Animation] Previous and Next touch buttons registered.");
+        }
+
         private void TryLoadModel()
         {
             if (!File.Exists(ModelsTestPlugin.ModelPath))
@@ -295,10 +387,11 @@ namespace ULTRADROID.Models.Test
 
                 int animationCount = instance.Animations.Count;
 
+                animationNames.Clear();
+                currentAnimationIndex = -1;
+
                 ModelsTestPlugin.Log.LogInfo(
                     "[Animation] Supported clips found: " + animationCount);
-
-                bool danceFound = false;
 
                 for (int i = 0; i < animationCount; i++)
                 {
@@ -307,25 +400,18 @@ namespace ULTRADROID.Models.Test
                     if (clip == null)
                         continue;
 
+                    animationNames.Add(clip.Name);
+
                     ModelsTestPlugin.Log.LogInfo(
                         "[Animation] Clip " + i + ": '" +
                         clip.Name + "' (duration: " +
                         clip.Duration + " seconds)");
-
-                    if (string.Equals(
-                        clip.Name,
-                        AnimationName,
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        danceFound = true;
-                    }
                 }
 
-                if (!danceFound)
+                if (animationNames.Count == 0)
                 {
                     ModelsTestPlugin.Log.LogError(
-                        "[Animation] Clip '" + AnimationName +
-                        "' was not found in the GLB.");
+                        "[Animation] No usable animation clips found.");
 
                     return;
                 }
@@ -343,19 +429,17 @@ namespace ULTRADROID.Models.Test
                 animationPlayer.Loop = true;
                 animationPlayer.PlaybackSpeed = 1f;
 
-                animationStarted = animationPlayer.Play(AnimationName);
+                int initialIndex = animationNames.FindIndex(
+                    name => string.Equals(
+                        name,
+                        AnimationName,
+                        StringComparison.OrdinalIgnoreCase));
 
-                if (animationStarted)
-                {
-                    ModelsTestPlugin.Log.LogInfo(
-                        "[Animation] Successfully started looping '" +
-                        AnimationName + "'.");
-                }
-                else
-                {
-                    ModelsTestPlugin.Log.LogError(
-                        "[Animation] Failed to start '" + AnimationName + "'.");
-                }
+                if (initialIndex < 0)
+                    initialIndex = 0;
+
+                if (PlayAnimationAtIndex(initialIndex))
+                    RegisterAnimationButtons();
             }
             catch (Exception ex)
             {
@@ -373,6 +457,21 @@ namespace ULTRADROID.Models.Test
         {
             animationPlayer = null;
             animationStarted = false;
+
+            if (previousAnimationButton != null)
+            {
+                previousAnimationButton.Dispose();
+                previousAnimationButton = null;
+            }
+
+            if (nextAnimationButton != null)
+            {
+                nextAnimationButton.Dispose();
+                nextAnimationButton = null;
+            }
+
+            animationNames.Clear();
+            currentAnimationIndex = -1;
 
             if (instance == null)
                 return;
