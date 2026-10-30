@@ -22,6 +22,7 @@ namespace ULTRADROID.Models.Test
     public class ModelsTestPlugin : BasePlugin
     {
         internal static ManualLogSource Log;
+        internal static ModelOwner Owner;
 
         internal const string ModelPath =
             "/storage/emulated/0/BepInEx_Android/com.aarongamingdev.ULTRAKILL/modpacks/import models test/plugins/ULTRADROID.BladesOfChaos/blades_of_chaos_god.glb";
@@ -29,6 +30,8 @@ namespace ULTRADROID.Models.Test
         public override void Load()
         {
             Log = base.Log;
+            Owner = ModelAPI.CreateOwner(
+                "somerandommaid.ultradroid.models.test");
 
             try
             {
@@ -415,7 +418,7 @@ namespace ULTRADROID.Models.Test
                     FlipUvV = true
                 };
 
-                instance = ModelAPI.LoadGLB(
+                instance = ModelsTestPlugin.Owner.LoadGLB(
                     ModelsTestPlugin.ModelPath,
                     options);
 
@@ -499,6 +502,9 @@ namespace ULTRADROID.Models.Test
         public void OnDestroy()
         {
             DestroyCurrentModel();
+
+            ModelsTestPlugin.Owner?.Dispose();
+            ModelsTestPlugin.Owner = null;
         }
 
         private void DestroyCurrentModel()
