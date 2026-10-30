@@ -1815,40 +1815,65 @@ namespace ULTRADROID.Models
                         "_MetallicGlossMap"
                     };
 
-                    foreach (string property in properties)
+                                    foreach (string property in properties)
+                {
+                    if (!material.HasProperty(property))
+                        continue;
+
+                    if (property.Contains("Color"))
                     {
-                        if (!material.HasProperty(property))
-                            continue;
+                        Debug.LogError(
+                            "[ULTRADROID Lighting] " +
+                            property + " = " +
+                            material.GetColor(property));
+                    }
+                    else if (
+                        property.EndsWith("Map") ||
+                        property.EndsWith("Tex"))
+                    {
+                        Texture texture = material.GetTexture(property);
 
-                        if (property.Contains("Color"))
-                        {
-                            Debug.LogError(
-                                "[ULTRADROID Lighting] " +
-                                property + " = " +
-                                material.GetColor(property));
-                        }
-                        else if (
-                            property.EndsWith("Map") ||
-                            property.EndsWith("Tex"))
-                        {
-                            Texture texture = material.GetTexture(property);
-
-                            Debug.LogError(
-                                "[ULTRADROID Lighting] " +
-                                property + " = " +
-                                (texture != null ? texture.name : "NULL"));
-                        }
-                        else
-                        {
-                            Debug.LogError(
-                                "[ULTRADROID Lighting] " +
-                                property + " = " +
-                                material.GetFloat(property));
-                        }
+                        Debug.LogError(
+                            "[ULTRADROID Lighting] " +
+                            property + " = " +
+                            (texture != null ? texture.name : "NULL"));
+                    }
+                    else
+                    {
+                        Debug.LogError(
+                            "[ULTRADROID Lighting] " +
+                            property + " = " +
+                            material.GetFloat(property));
                     }
                 }
+
+                Debug.LogError(
+                    "[ULTRADROID Lighting] Emission keyword: " +
+                    material.IsKeywordEnabled("_EMISSION"));
+
+                Debug.LogError(
+                    "[ULTRADROID Lighting] Material keywords: " +
+                    string.Join(", ", material.shaderKeywords));
+
+                Texture mainTex = material.GetTexture("_MainTex");
+                Texture bumpTex = material.GetTexture("_BumpMap");
+
+                Debug.LogError(
+                    "[ULTRADROID Lighting] MainTex instance: " +
+                    (mainTex != null
+                        ? mainTex.GetInstanceID() + " | " +
+                          mainTex.width + "x" + mainTex.height
+                        : "NULL"));
+
+                Debug.LogError(
+                    "[ULTRADROID Lighting] BumpMap instance: " +
+                    (bumpTex != null
+                        ? bumpTex.GetInstanceID() + " | " +
+                          bumpTex.width + "x" + bumpTex.height
+                        : "NULL"));
             }
-            catch (Exception ex)
+        }
+        catch (Exception ex)
             {
                 Debug.LogError(
                     "[ULTRADROID Lighting] Diagnostics failed: " +
