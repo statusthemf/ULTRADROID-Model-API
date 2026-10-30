@@ -245,7 +245,18 @@ namespace ULTRADROID.Models.Test
             animationPlayer.Loop = true;
             animationPlayer.PlaybackSpeed = 1f;
 
-            if (!animationPlayer.Play(clipName))
+            bool played;
+
+            if (animationStarted)
+            {
+                played = animationPlayer.CrossFade(clipName, 0.35f);
+            }
+            else
+            {
+                played = animationPlayer.Play(clipName);
+            }
+
+            if (!played)
             {
                 ModelsTestPlugin.Log.LogError(
                     "[Animation] Failed to play: " + clipName);
