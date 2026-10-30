@@ -65,6 +65,10 @@ namespace ULTRADROID.Models.Test
 
         private Camera currentCamera;
 
+        private ModelInstance pendingDestroyModel;
+        private string pendingDestroyId;
+        private int pendingDestroyCheckFrame = -1;
+
         private readonly List<ModelInstance> models =
             new List<ModelInstance>();
 
@@ -100,6 +104,8 @@ namespace ULTRADROID.Models.Test
         {
             try
             {
+                VerifyPendingDestroy();
+
                 Scene active = SceneManager.GetActiveScene();
                 string candidate = null;
 
@@ -637,6 +643,14 @@ namespace ULTRADROID.Models.Test
 
         private void DestroyLatestModel()
         {
+            if (pendingDestroyModel != null)
+            {
+                ModelsTestPlugin.Log.LogWarning(
+                    "[Destroy] Waiting for previous destruction verification.");
+
+                return;
+            }
+
             ModelInstance model = GetLatestModel();
 
             if (model == null)
@@ -655,12 +669,37 @@ namespace ULTRADROID.Models.Test
             if (instance == model)
                 instance = GetLatestModel();
 
-            if (animationPlayer != null &&
-                instance == null)
+            if (animationPlayer != null && instance == null)
             {
                 animationPlayer = null;
                 animationStarted = false;
             }
+
+            bool removedFromRegistry =
+                ModelAPI.GetModel(id) == null;
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Destroy] Requested destruction: " + id);
+
+            ModelsTestPlugin.Log.LogInfo(
+                "[Destroy] Removed from registry: " +
+                removedFromRegistry);
+
+            pendingDestroyModel = model;
+            pendingDestroyId = id;
+            pendingDestroyCheckFrame = Time.frameCount;
+        }
+
+        private void VerifyPendingDestroy()
+        {
+            if (pendingDestroyModel == null)
+                return;
+
+            if (Time.frameCount <= pendingDestroyCheckFrame)
+                return;
+
+            ModelInstance model = pendingDestroyModel;
+            string id = pendingDestroyId;
 
             bool destroyed =
                 !model.IsValid ||
@@ -689,6 +728,10 @@ namespace ULTRADROID.Models.Test
                 ModelsTestPlugin.Log.LogError(
                     "[TEST FAIL] Model destruction verification failed.");
             }
+
+            pendingDestroyModel = null;
+            pendingDestroyId = null;
+            pendingDestroyCheckFrame = -1;
         }
 
         private void TestUnloadAll()
