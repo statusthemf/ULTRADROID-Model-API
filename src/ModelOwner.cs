@@ -89,6 +89,11 @@ namespace ULTRADROID.Models
                     nameof(ModelOwner));
         }
 
+        internal void RegisterWithRegistry()
+        {
+            ModelRegistry.RegisterOwner(this);
+        }
+
         public void Dispose()
         {
             if (_disposed)
