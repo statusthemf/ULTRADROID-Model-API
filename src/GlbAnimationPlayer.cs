@@ -107,6 +107,12 @@ namespace ULTRADROID.Models
             public readonly Dictionary<Transform, Pose> OriginalPoses =
                 new Dictionary<Transform, Pose>();
 
+            public readonly Dictionary<Transform, Pose> FadeFromPoses =
+                new Dictionary<Transform, Pose>();
+
+            public readonly Dictionary<Transform, Pose> FadeToPoses =
+                new Dictionary<Transform, Pose>();
+
             public readonly Dictionary<SkinnedMeshRenderer, float[]> OriginalMorphWeights =
                 new Dictionary<SkinnedMeshRenderer, float[]>();
 
@@ -514,10 +520,33 @@ namespace ULTRADROID.Models
             {
                 state.FadeElapsed += deltaTime;
 
+                float fadeDuration = state.FadeFrom.Duration;
+
+                if (fadeDuration > 0f)
+                {
+                    state.FadeFromTime += deltaTime * state.Speed;
+
+                    if (state.Loop)
+                    {
+                        state.FadeFromTime %= fadeDuration;
+
+                        if (state.FadeFromTime < 0f)
+                            state.FadeFromTime += fadeDuration;
+                    }
+                    else
+                    {
+                        state.FadeFromTime = Mathf.Clamp(
+                            state.FadeFromTime,
+                            0f,
+                            fadeDuration);
+                    }
+                }
+
                 if (state.FadeElapsed >= state.FadeDuration)
                 {
                     state.FadeFrom = null;
                     state.FadeDuration = 0f;
+                    state.FadeElapsed = 0f;
                 }
             }
 
@@ -588,24 +617,131 @@ namespace ULTRADROID.Models
             if (state == null || state.Clip == null)
                 return;
 
-            ApplyClip(state, state.Clip, time, 1f, null);
-
             if (state.FadeFrom != null && state.FadeDuration > 0f)
             {
-                float alpha = Mathf.Clamp01(state.FadeElapsed / state.FadeDuration);
+                float alpha = Mathf.Clamp01(
+                    state.FadeElapsed / state.FadeDuration);
 
-                // Crossfade blends the incoming pose over the outgoing pose.
-                ApplyClip(state, state.FadeFrom, state.FadeFromTime, 1f - alpha, null);
-                ApplyClip(state, state.Clip, time, alpha, null);
+                // Evaluate the outgoing animation independently.
+                RestorePose(state);
+
+                ApplyClip(
+                    state,
+                    state.FadeFrom,
+                    state.FadeFromTime,
+                    1f,
+                    null);
+
+                CapturePoses(
+                    state.Model,
+                    state.FadeFromPoses);
+
+                // Evaluate the incoming animation independently.
+                RestorePose(state);
+
+                ApplyClip(
+                    state,
+                    state.Clip,
+                    time,
+                    1f,
+                    null);
+
+                CapturePoses(
+                    state.Model,
+                    state.FadeToPoses);
+
+                // Blend the two evaluated poses.
+                RestorePose(state);
+
+                foreach (KeyValuePair<Transform, Pose> item
+                    in state.FadeFromPoses)
+                {
+                    Transform target = item.Key;
+
+                    if (target == null ||
+                        !state.FadeToPoses.TryGetValue(
+                            target,
+                            out Pose incoming))
+                        continue;
+
+                    Pose outgoing = item.Value;
+
+                    target.localPosition = Vector3.Lerp(
+                        outgoing.Position,
+                        incoming.Position,
+                        alpha);
+
+                    target.localRotation = Quaternion.Slerp(
+                        outgoing.Rotation,
+                        incoming.Rotation,
+                        alpha);
+
+                    target.localScale = Vector3.Lerp(
+                        outgoing.Scale,
+                        incoming.Scale,
+                        alpha);
+                }
+            }
+            else
+            {
+                ApplyClip(state, state.Clip, time, 1f, null);
             }
 
+            // Apply additional animation layers after the main blend.
             for (int i = 0; i < state.Layers.Count; i++)
             {
                 LayerEntry layer = state.Layers[i];
 
                 if (layer.Clip != null && layer.Weight > 0f)
-                    ApplyClip(state, layer.Clip, time, layer.Weight, layer.AllowedNames);
+                {
+                    ApplyClip(
+                        state,
+                        layer.Clip,
+                        time,
+                        layer.Weight,
+                        layer.AllowedNames);
+                }
             }
+        }
+
+        private static void CapturePoses(
+            ModelInstance model,
+            Dictionary<Transform, Pose> destination)
+        {
+            destination.Clear();
+
+            if (model == null || model.Root == null)
+                return;
+
+            foreach (KeyValuePair<Transform, Pose> item
+                in GetTransforms(model))
+            {
+                Transform target = item.Key;
+
+                if (target != null)
+                    destination[target] = new Pose(target);
+            }
+        }
+
+        private static Dictionary<Transform, Pose> GetTransforms(
+            ModelInstance model)
+        {
+            Dictionary<Transform, Pose> result =
+                new Dictionary<Transform, Pose>();
+
+            if (model == null || model.Root == null)
+                return result;
+
+            Transform[] transforms =
+                model.Root.GetComponentsInChildren<Transform>(true);
+
+            foreach (Transform target in transforms)
+            {
+                if (target != null)
+                    result[target] = new Pose(target);
+            }
+
+            return result;
         }
 
         private static void ApplyClip(
