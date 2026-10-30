@@ -389,6 +389,23 @@ namespace ULTRADROID.Models.Test
                 "[Animation] Previous and Next touch buttons registered.");
         }
 
+        private UnityEngine.Object FindIl2CppObjectByTypeName(string typeName)
+        {
+            UnityEngine.Object[] objects =
+                Resources.FindObjectsOfTypeAll<UnityEngine.Object>();
+
+            foreach (UnityEngine.Object obj in objects)
+            {
+                if (obj == null)
+                    continue;
+
+                if (obj.GetType().Name == typeName)
+                    return obj;
+            }
+
+            return null;
+        }
+
         private void LogNativeWeaponDiagnostics()
         {
             Type gunControlType = null;
@@ -413,7 +430,7 @@ namespace ULTRADROID.Models.Test
             }
 
             UnityEngine.Object gunControlObject =
-                UnityEngine.Object.FindObjectOfType(gunControlType);
+                FindIl2CppObjectByTypeName("GunControl");
 
             if (gunControlObject == null)
             {
