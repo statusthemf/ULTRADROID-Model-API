@@ -1557,7 +1557,14 @@ namespace ULTRADROID.Models
                 renderer.bones = skinBones;
                 renderer.rootBone = skinRoot;
                 renderer.sharedMaterials = submeshMaterials.ToArray();
+
+                Debug.LogError(
+                    "[ULTRADROID LIGHTING TEST] Reached skinned renderer.");
+
                 LogRendererDiagnostics(renderer);
+
+                Debug.LogError(
+                    "[ULTRADROID LIGHTING TEST] Diagnostics finished.");
 
                 renderer.updateWhenOffscreen = true;
             }
